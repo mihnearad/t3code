@@ -144,6 +144,15 @@ export class WorkspaceFileSystem extends Context.Service<
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
     >;
+    /** Applies writeFile's checks to a target, for callers such as uploads that write it themselves. */
+    readonly resolveWritePath: (
+      input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
+    ) => Effect.Effect<
+      { readonly relativePath: string; readonly realTargetPath: string },
+      | WorkspaceFileSystemError
+      | WorkspacePaths.WorkspacePathOutsideRootError
+      | KnownWorkspaces.UnknownWorkspaceError
+    >;
     /** Renames or moves one file or folder inside a known workspace; never replaces an entry. */
     readonly moveEntry: (
       input: ProjectMoveEntryInput,
@@ -683,12 +692,21 @@ export const make = Effect.gen(function* () {
     return { relativePath: destination.relativePath };
   });
 
+  const resolveWritePath: WorkspaceFileSystem["Service"]["resolveWritePath"] = Effect.fn(
+    "WorkspaceFileSystem.resolveWritePath",
+  )(function* (input) {
+    yield* knownWorkspaces.assertContains(input.cwd);
+    const target = yield* resolveWriteTarget(input);
+    return { relativePath: target.relativePath, realTargetPath: target.realTargetPath };
+  });
+
   return WorkspaceFileSystem.of({
     getMetadata,
     readFile,
     writeFile,
     createDirectory,
     moveEntry,
+    resolveWritePath,
   });
 });
 

@@ -42,7 +42,15 @@ import { useProjectPathSearch } from "~/state/queries";
 import { useEnvironmentScope } from "~/state/session";
 import { NewWorkspaceEntryButton, NewWorkspaceEntryRow } from "./NewWorkspaceEntryRow";
 import { type FileTreeMove, planFileTreeMoves } from "./fileTreeMove";
-import { isOverFileTreeRow, setRootDropHighlight } from "./fileTreeRootDrop";
+import {
+  fileDropFolder,
+  isFinderFileDrag,
+  isOverFileTreeRow,
+  setRootDropHighlight,
+} from "./fileTreeRootDrop";
+import { captureDroppedEntries, collectDroppedFiles, type DroppedEntry } from "./droppedFiles";
+import { useWorkspaceUpload } from "./useWorkspaceUpload";
+import { WorkspaceUploadStatus } from "./WorkspaceUploadStatus";
 import { useWorkspaceEntryActions } from "./useWorkspaceEntryActions";
 import {
   joinWorkspacePath,
@@ -186,6 +194,21 @@ export default function FileBrowserPanel({
     renamePath?: string;
   } | null>(null);
   const entryActions = useWorkspaceEntryActions(environmentId, cwd);
+  const upload = useWorkspaceUpload(environmentId, cwd);
+  const uploadDroppedFiles = async (folderPath: string, captured: DroppedEntry[] | File[]) => {
+    const { files, skipped } = await collectDroppedFiles(captured);
+    if (files.length === 0 && skipped.length === 0) return;
+    await upload.start({
+      folderPath,
+      files,
+      skipped,
+      onFoldersChanged: () => {
+        refresh();
+        void load(folderPath, true);
+        expandFolder(folderPath);
+      },
+    });
+  };
   // The tree's drop handlers are created before the tree model, so they reach it through this ref.
   const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
   const expandFolder = (folderPath: string) => {
@@ -593,7 +616,7 @@ export default function FileBrowserPanel({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-background data-root-drop:ring-2 data-root-drop:ring-primary/50 data-root-drop:ring-inset"
+      className="relative flex min-h-0 flex-1 flex-col bg-background data-root-drop:ring-2 data-root-drop:ring-primary/50 data-root-drop:ring-inset data-drop-label:after:pointer-events-none data-drop-label:after:absolute data-drop-label:after:inset-x-2 data-drop-label:after:bottom-2 data-drop-label:after:truncate data-drop-label:after:rounded-md data-drop-label:after:bg-primary data-drop-label:after:px-2 data-drop-label:after:py-1 data-drop-label:after:text-xs data-drop-label:after:text-primary-foreground data-drop-label:after:content-[attr(data-drop-label)]"
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {
@@ -603,6 +626,13 @@ export default function FileBrowserPanel({
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
       onDragOver={(event) => {
+        if (isFinderFileDrag(event) && canCreateEntries && !upload.progress) {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+          const folder = fileDropFolder(event.nativeEvent);
+          setRootDropHighlight(event.currentTarget, true, `Upload to ${folder || projectName}/`);
+          return;
+        }
         const rootDrop = isRootDrop(event.nativeEvent);
         setRootDropHighlight(event.currentTarget, rootDrop);
         if (!rootDrop) return;
@@ -619,6 +649,15 @@ export default function FileBrowserPanel({
       }}
       onDrop={(event) => {
         setRootDropHighlight(event.currentTarget, false);
+        if (isFinderFileDrag(event)) {
+          if (!canCreateEntries || upload.progress) return;
+          event.preventDefault();
+          void uploadDroppedFiles(
+            fileDropFolder(event.nativeEvent),
+            captureDroppedEntries(event.dataTransfer),
+          );
+          return;
+        }
         if (!isRootDrop(event.nativeEvent)) return;
         event.preventDefault();
         const moves = planFileTreeMoves(dragMention.draggedPaths(), {
@@ -680,6 +719,9 @@ export default function FileBrowserPanel({
           </Tooltip>
         ) : null}
       </div>
+      {upload.progress ? (
+        <WorkspaceUploadStatus progress={upload.progress} onCancel={upload.cancel} />
+      ) : null}
       {newEntry ? (
         <NewWorkspaceEntryRow
           key={`${newEntry.kind}:${newEntry.parentPath}:${newEntry.renamePath ?? ""}`}

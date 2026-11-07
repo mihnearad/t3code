@@ -543,6 +543,30 @@ export const ProjectMoveEntryResult = Schema.Struct({
 });
 export type ProjectMoveEntryResult = typeof ProjectMoveEntryResult.Type;
 
+/** Largest file a client may upload into a workspace in one request. */
+export const PROJECT_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+export const PROJECT_UPLOAD_URL_TTL_MS = 10 * 60_000;
+
+export const ProjectCreateUploadUrlInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROJECT_UPLOAD_MAX_BYTES)),
+  /** Without it an existing file is reported, not replaced. */
+  overwrite: Schema.Boolean,
+});
+export type ProjectCreateUploadUrlInput = typeof ProjectCreateUploadUrlInput.Type;
+
+export const ProjectCreateUploadUrlResult = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("exists"), relativePath: TrimmedNonEmptyString }),
+  Schema.Struct({
+    status: Schema.Literal("ready"),
+    relativePath: TrimmedNonEmptyString,
+    relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(8192)),
+    expiresAt: Schema.Number,
+  }),
+]);
+export type ProjectCreateUploadUrlResult = typeof ProjectCreateUploadUrlResult.Type;
+
 export const ProjectEnsureScratchResult = Schema.Struct({
   projectId: ProjectId,
 });

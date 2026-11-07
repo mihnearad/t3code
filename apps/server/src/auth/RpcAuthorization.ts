@@ -153,6 +153,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsWriteFile]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsCreateDirectory]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsMoveEntry]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsCreateUploadUrl]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsEnsureScratch]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsCreateNew]: AuthOrchestrationOperateScope,
   [WS_METHODS.shellOpenInEditor]: AuthOrchestrationOperateScope,
