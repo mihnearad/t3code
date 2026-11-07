@@ -3,7 +3,11 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import {
+  AuthFilesystemWriteScope,
+  type EnvironmentId,
+  type ProjectEntry,
+} from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -34,6 +38,10 @@ import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+import { useEnvironmentScope } from "~/state/session";
+import { NewWorkspaceEntryButton, NewWorkspaceEntryRow } from "./NewWorkspaceEntryRow";
+import { useCreateWorkspaceEntry } from "./useCreateWorkspaceEntry";
+import { parentWorkspacePath } from "./workspaceEntryName";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -160,6 +168,19 @@ export default function FileBrowserPanel({
   } = useDirectoryEntries(environmentId, cwd);
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
+  // Host folders are not known workspaces, so the server refuses writes there.
+  const canCreateEntries =
+    useEnvironmentScope(environmentId, AuthFilesystemWriteScope) && !hostFolder;
+  const [newEntry, setNewEntry] = useState<{ parentPath: string } | null>(null);
+  const createEntry = useCreateWorkspaceEntry(environmentId, cwd);
+  const submitNewEntry = async (parentPath: string, name: string) => {
+    const result = await createEntry({ parentPath, name });
+    if (!result.ok) return "interrupted" in result ? null : result.message;
+    setNewEntry(null);
+    await load(parentPath, true);
+    onOpenFile(panelPath(result.relativePath));
+    return null;
+  };
   const pathSearch = useProjectPathSearch(
     { environmentId, cwd: hostFolder ? null : cwd, query: query.slice(0, 256) },
     200,
@@ -200,10 +221,20 @@ export default function FileBrowserPanel({
             ...fileMenuItems,
             { id: "copy-mention", label: "Copy mention" },
             { id: "add-to-chat", label: "Add to chat" },
+            ...(canCreateEntries
+              ? [{ id: "new-file", label: "New file…", separatorBefore: true }]
+              : []),
           ],
           position,
         );
         if (clicked === null) return;
+        if (clicked === "new-file") {
+          const isDirectory = item.path.endsWith("/");
+          setNewEntry({
+            parentPath: isDirectory ? relativePath : parentWorkspacePath(relativePath),
+          });
+          return;
+        }
         // Open-with submenu ids are absent from the top-level item list.
         const isFileMenuAction =
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
@@ -489,6 +520,9 @@ export default function FileBrowserPanel({
         data-surface-subheader
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
+        {canCreateEntries ? (
+          <NewWorkspaceEntryButton kind="file" onClick={() => setNewEntry({ parentPath: "" })} />
+        ) : null}
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
@@ -524,6 +558,15 @@ export default function FileBrowserPanel({
           </Tooltip>
         ) : null}
       </div>
+      {newEntry ? (
+        <NewWorkspaceEntryRow
+          key={newEntry.parentPath}
+          kind="file"
+          parentPath={newEntry.parentPath}
+          onSubmit={(name) => submitNewEntry(newEntry.parentPath, name)}
+          onCancel={() => setNewEntry(null)}
+        />
+      ) : null}
       {error || pathSearch.error ? (
         <button
           type="button"
