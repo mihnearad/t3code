@@ -2,6 +2,7 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
+  FileTreeDropTarget,
 } from "@pierre/trees";
 import {
   AuthFilesystemWriteScope,
@@ -40,6 +41,8 @@ import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 import { useEnvironmentScope } from "~/state/session";
 import { NewWorkspaceEntryButton, NewWorkspaceEntryRow } from "./NewWorkspaceEntryRow";
+import { type FileTreeMove, planFileTreeMoves } from "./fileTreeMove";
+import { isOverFileTreeRow, setRootDropHighlight } from "./fileTreeRootDrop";
 import { useWorkspaceEntryActions } from "./useWorkspaceEntryActions";
 import {
   joinWorkspacePath,
@@ -183,8 +186,10 @@ export default function FileBrowserPanel({
     renamePath?: string;
   } | null>(null);
   const entryActions = useWorkspaceEntryActions(environmentId, cwd);
+  // The tree's drop handlers are created before the tree model, so they reach it through this ref.
+  const treeModelRef = useRef<ReturnType<typeof useFileTree>["model"] | null>(null);
   const expandFolder = (folderPath: string) => {
-    const folder = folderPath ? model.getItem(`${folderPath}/`) : null;
+    const folder = folderPath ? treeModelRef.current?.getItem(`${folderPath}/`) : null;
     if (folder && "expand" in folder) folder.expand();
   };
   const finishMove = async (fromPath: string, toPath: string) => {
@@ -197,6 +202,30 @@ export default function FileBrowserPanel({
     const moved = selectedPath ? remapMovedPath(selectedPath, fromPath, toPath) : null;
     if (moved) onOpenFile(panelPath(moved));
   };
+  const canDropEntries = useStableCallback(() => canCreateEntries);
+  const runTreeMoves = async (moves: readonly FileTreeMove[]) => {
+    for (const move of moves) {
+      const result = await entryActions.move(move.fromPath, move.toPath);
+      if (result.ok) await finishMove(move.fromPath, result.relativePath);
+      else if (!("interrupted" in result)) {
+        toastManager.add({
+          type: "error",
+          title: `Unable to move ${move.fromPath}`,
+          description: result.message,
+        });
+      }
+    }
+  };
+  const handleTreeDrop = useStableCallback(
+    (draggedPaths: readonly string[], target: FileTreeDropTarget) => {
+      const moves = planFileTreeMoves(draggedPaths, target);
+      // Pierre has already moved its rows. Put them back so the tree only shows what the server did.
+      for (const move of moves.toReversed()) {
+        treeModelRef.current?.move(move.toTreePath, move.fromTreePath);
+      }
+      void runTreeMoves(moves);
+    },
+  );
   const submitNewEntry = async (
     entry: { kind: WorkspaceEntryKind; parentPath: string; renamePath?: string },
     name: string,
@@ -336,6 +365,8 @@ export default function FileBrowserPanel({
   const dragMention = createFileTreeDragMentionController(
     hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
+  const isRootDrop = (event: { composedPath(): ReadonlyArray<unknown> }) =>
+    canCreateEntries && dragMention.isDragInProgress() && !isOverFileTreeRow(event);
   const { model } = useFileTree({
     composition: {
       contextMenu: {
@@ -345,7 +376,12 @@ export default function FileBrowserPanel({
         },
       },
     },
-    dragAndDrop: { canDrop: () => false },
+    dragAndDrop: {
+      canDrop: () => canDropEntries(),
+      onDropComplete: (event) => handleTreeDrop(event.draggedPaths, event.target),
+      onDropError: (message) =>
+        toastManager.add({ type: "error", title: "Unable to move", description: message }),
+    },
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
     flattenEmptyDirectories: true,
@@ -375,6 +411,10 @@ export default function FileBrowserPanel({
     onSearchChange: (value) => setQuery(value ?? ""),
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands the tree model to drop and create handlers that were built before it
+  useEffect(() => {
+    treeModelRef.current = model;
+  }, [model]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when loading directories change
   useEffect(() => {
     if (loadingDirectoriesRef.current === loadingDirectories) return;
@@ -553,7 +593,7 @@ export default function FileBrowserPanel({
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col bg-background"
+      className="flex min-h-0 flex-1 flex-col bg-background data-root-drop:ring-2 data-root-drop:ring-primary/50 data-root-drop:ring-inset"
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {
@@ -562,6 +602,31 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
+      onDragOver={(event) => {
+        const rootDrop = isRootDrop(event.nativeEvent);
+        setRootDropHighlight(event.currentTarget, rootDrop);
+        if (!rootDrop) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+      }}
+      onDragLeave={(event) => {
+        if (
+          event.relatedTarget instanceof Node &&
+          event.currentTarget.contains(event.relatedTarget)
+        )
+          return;
+        setRootDropHighlight(event.currentTarget, false);
+      }}
+      onDrop={(event) => {
+        setRootDropHighlight(event.currentTarget, false);
+        if (!isRootDrop(event.nativeEvent)) return;
+        event.preventDefault();
+        const moves = planFileTreeMoves(dragMention.draggedPaths(), {
+          kind: "root",
+          directoryPath: null,
+        });
+        void runTreeMoves(moves);
+      }}
     >
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"

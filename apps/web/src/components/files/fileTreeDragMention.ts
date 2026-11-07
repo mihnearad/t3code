@@ -19,6 +19,7 @@ export interface FileTreeDragMentionHost {
 
 export interface FileTreeDragMentionController {
   isDragInProgress(): boolean;
+  draggedPaths(): ReadonlyArray<string>;
   handleSelectionChange(selectedPaths: ReadonlyArray<string>): void;
   handleDragStart(event: FileTreeDragStartEvent): void;
   handleDragEnd(deselect: (treePath: string) => void): void;
@@ -39,6 +40,7 @@ export function createFileTreeDragMentionController(
   let draggedPaths: ReadonlyArray<string> = [];
   return {
     isDragInProgress: () => draggedPaths.length > 0,
+    draggedPaths: () => draggedPaths,
     handleSelectionChange(selectedPaths) {
       selection = selectedPaths;
     },
