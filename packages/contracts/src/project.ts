@@ -519,6 +519,17 @@ export const ProjectWriteFileResult = Schema.Struct({
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
+export const ProjectCreateDirectoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectCreateDirectoryInput = typeof ProjectCreateDirectoryInput.Type;
+
+export const ProjectCreateDirectoryResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectCreateDirectoryResult = typeof ProjectCreateDirectoryResult.Type;
+
 export const ProjectEnsureScratchResult = Schema.Struct({
   projectId: ProjectId,
 });

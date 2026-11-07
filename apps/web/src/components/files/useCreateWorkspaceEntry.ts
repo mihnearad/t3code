@@ -10,7 +10,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { joinWorkspacePath } from "./workspaceEntryName";
+import { joinWorkspacePath, type WorkspaceEntryKind } from "./workspaceEntryName";
 
 export type CreateWorkspaceEntryResult =
   | { readonly ok: true; readonly relativePath: string }
@@ -22,6 +22,9 @@ const errorMessage = (error: unknown, fallback: string) =>
 
 export function useCreateWorkspaceEntry(environmentId: EnvironmentId, cwd: string) {
   const writeFile = useAtomCommand(projectEnvironment.writeFile, { reportFailure: false });
+  const createDirectory = useAtomCommand(projectEnvironment.createDirectory, {
+    reportFailure: false,
+  });
 
   // writeFile truncates an existing file, so read the folder fresh before creating.
   const findExisting = async (parentPath: string, relativePath: string) => {
@@ -37,6 +40,7 @@ export function useCreateWorkspaceEntry(environmentId: EnvironmentId, cwd: strin
   };
 
   return async (input: {
+    readonly kind: WorkspaceEntryKind;
     readonly parentPath: string;
     readonly name: string;
   }): Promise<CreateWorkspaceEntryResult> => {
@@ -45,12 +49,14 @@ export function useCreateWorkspaceEntry(environmentId: EnvironmentId, cwd: strin
     if ("error" in existing) return { ok: false, message: existing.error };
     if (existing.exists) return { ok: false, message: `"${input.name}" already exists.` };
 
-    const result = await writeFile({ environmentId, input: { cwd, relativePath, contents: "" } });
+    const result =
+      input.kind === "folder"
+        ? await createDirectory({ environmentId, input: { cwd, relativePath } })
+        : await writeFile({ environmentId, input: { cwd, relativePath, contents: "" } });
     if (result._tag === "Success") return { ok: true, relativePath: result.value.relativePath };
     if (isAtomCommandInterrupted(result)) return { ok: false, interrupted: true };
-    return {
-      ok: false,
-      message: errorMessage(squashAtomCommandFailure(result), "Unable to create the file."),
-    };
+    const fallback =
+      input.kind === "folder" ? "Unable to create the folder." : "Unable to create the file.";
+    return { ok: false, message: errorMessage(squashAtomCommandFailure(result), fallback) };
   };
 }

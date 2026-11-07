@@ -10,6 +10,8 @@ import type {
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
+  ProjectCreateDirectoryInput,
+  ProjectCreateDirectoryResult,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -126,6 +128,15 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
+      | WorkspaceFileSystemError
+      | WorkspacePaths.WorkspacePathOutsideRootError
+      | KnownWorkspaces.UnknownWorkspaceError
+    >;
+    /** Creates one new folder inside a known workspace; an existing entry is an error. */
+    readonly createDirectory: (
+      input: ProjectCreateDirectoryInput,
+    ) => Effect.Effect<
+      ProjectCreateDirectoryResult,
       | WorkspaceFileSystemError
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
@@ -460,7 +471,7 @@ export const make = Effect.gen(function* () {
 
   // Resolve existing ancestors and reject dangling links so creation cannot follow symlinks outside root.
   const resolveWriteTarget = Effect.fn("WorkspaceFileSystem.resolveWriteTarget")(function* (
-    input: ProjectWriteFileInput,
+    input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
   ) {
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
@@ -592,7 +603,34 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
+  const createDirectory: WorkspaceFileSystem["Service"]["createDirectory"] = Effect.fn(
+    "WorkspaceFileSystem.createDirectory",
+  )(function* (input) {
+    yield* knownWorkspaces.assertContains(input.cwd);
+    const target = yield* resolveWriteTarget(input);
+    const operationError = (operationPath: string) => (cause: unknown) =>
+      new WorkspaceFileSystemOperationError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: target.realTargetPath,
+        operationPath,
+        operation: "make-directory",
+        cause,
+      });
+    const parentPath = path.dirname(target.realTargetPath);
+    yield* fileSystem
+      .makeDirectory(parentPath, { recursive: true })
+      .pipe(Effect.mapError(operationError(parentPath)));
+    // Not recursive: an existing file or folder fails with EEXIST instead of being reused.
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.mkdir(target.realTargetPath),
+      catch: operationError(target.realTargetPath),
+    });
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: target.relativePath };
+  });
+
+  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile, createDirectory });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

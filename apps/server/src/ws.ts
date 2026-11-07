@@ -2996,6 +2996,18 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.projectsCreateDirectory]: (input) =>
+          workspaceFileSystem.createDirectory(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectWriteFileError({
+                  cwd: input.cwd,
+                  relativePath: input.relativePath,
+                  ...projectFileFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
         [WS_METHODS.projectsMutate]: (mutation) =>
           startup.enqueueCommand(mutateProject(mutation)).pipe(
             Effect.mapError(

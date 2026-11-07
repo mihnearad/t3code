@@ -228,5 +228,15 @@ export function createProjectEnvironmentAtoms<R, E>(
             fileMetadata.refreshPath(environmentId, path, registry);
         }),
     }),
+    createDirectory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:create-directory",
+      tag: WS_METHODS.projectsCreateDirectory,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.cwd, input.relativePath]),
+      },
+    }),
   };
 }

@@ -41,7 +41,7 @@ import { useProjectPathSearch } from "~/state/queries";
 import { useEnvironmentScope } from "~/state/session";
 import { NewWorkspaceEntryButton, NewWorkspaceEntryRow } from "./NewWorkspaceEntryRow";
 import { useCreateWorkspaceEntry } from "./useCreateWorkspaceEntry";
-import { parentWorkspacePath } from "./workspaceEntryName";
+import { parentWorkspacePath, type WorkspaceEntryKind } from "./workspaceEntryName";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -171,14 +171,21 @@ export default function FileBrowserPanel({
   // Host folders are not known workspaces, so the server refuses writes there.
   const canCreateEntries =
     useEnvironmentScope(environmentId, AuthFilesystemWriteScope) && !hostFolder;
-  const [newEntry, setNewEntry] = useState<{ parentPath: string } | null>(null);
+  const [newEntry, setNewEntry] = useState<{
+    kind: WorkspaceEntryKind;
+    parentPath: string;
+  } | null>(null);
   const createEntry = useCreateWorkspaceEntry(environmentId, cwd);
-  const submitNewEntry = async (parentPath: string, name: string) => {
-    const result = await createEntry({ parentPath, name });
+  const submitNewEntry = async (kind: WorkspaceEntryKind, parentPath: string, name: string) => {
+    const result = await createEntry({ kind, parentPath, name });
     if (!result.ok) return "interrupted" in result ? null : result.message;
     setNewEntry(null);
     await load(parentPath, true);
-    onOpenFile(panelPath(result.relativePath));
+    if (kind === "file") onOpenFile(panelPath(result.relativePath));
+    else if (parentPath) {
+      const parent = model.getItem(`${parentPath}/`);
+      if (parent && "expand" in parent) parent.expand();
+    }
     return null;
   };
   const pathSearch = useProjectPathSearch(
@@ -222,15 +229,19 @@ export default function FileBrowserPanel({
             { id: "copy-mention", label: "Copy mention" },
             { id: "add-to-chat", label: "Add to chat" },
             ...(canCreateEntries
-              ? [{ id: "new-file", label: "New file…", separatorBefore: true }]
+              ? [
+                  { id: "new-file", label: "New file…", separatorBefore: true },
+                  { id: "new-folder", label: "New folder…" },
+                ]
               : []),
           ],
           position,
         );
         if (clicked === null) return;
-        if (clicked === "new-file") {
+        if (clicked === "new-file" || clicked === "new-folder") {
           const isDirectory = item.path.endsWith("/");
           setNewEntry({
+            kind: clicked === "new-folder" ? "folder" : "file",
             parentPath: isDirectory ? relativePath : parentWorkspacePath(relativePath),
           });
           return;
@@ -521,7 +532,16 @@ export default function FileBrowserPanel({
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
         {canCreateEntries ? (
-          <NewWorkspaceEntryButton kind="file" onClick={() => setNewEntry({ parentPath: "" })} />
+          <>
+            <NewWorkspaceEntryButton
+              kind="file"
+              onClick={() => setNewEntry({ kind: "file", parentPath: "" })}
+            />
+            <NewWorkspaceEntryButton
+              kind="folder"
+              onClick={() => setNewEntry({ kind: "folder", parentPath: "" })}
+            />
+          </>
         ) : null}
         <FileSearchField
           name="project-files-search"
@@ -560,10 +580,10 @@ export default function FileBrowserPanel({
       </div>
       {newEntry ? (
         <NewWorkspaceEntryRow
-          key={newEntry.parentPath}
-          kind="file"
+          key={`${newEntry.kind}:${newEntry.parentPath}`}
+          kind={newEntry.kind}
           parentPath={newEntry.parentPath}
-          onSubmit={(name) => submitNewEntry(newEntry.parentPath, name)}
+          onSubmit={(name) => submitNewEntry(newEntry.kind, newEntry.parentPath, name)}
           onCancel={() => setNewEntry(null)}
         />
       ) : null}
