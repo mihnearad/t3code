@@ -228,6 +228,15 @@ export function createProjectEnvironmentAtoms<R, E>(
             fileMetadata.refreshPath(environmentId, path, registry);
         }),
     }),
+    deleteEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:delete-entry",
+      tag: WS_METHODS.projectsDeleteEntry,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.cwd}`,
+      },
+    }),
     createUploadUrl: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:create-upload-url",
       tag: WS_METHODS.projectsCreateUploadUrl,

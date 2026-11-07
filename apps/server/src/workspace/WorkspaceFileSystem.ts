@@ -14,6 +14,8 @@ import type {
   ProjectCreateDirectoryResult,
   ProjectMoveEntryInput,
   ProjectMoveEntryResult,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -56,6 +58,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedError<Worksp
       "make-directory",
       "write-file",
       "rename",
+      "remove",
     ]),
     cause: Schema.Defect(),
   },
@@ -140,6 +143,15 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectCreateDirectoryInput,
     ) => Effect.Effect<
       ProjectCreateDirectoryResult,
+      | WorkspaceFileSystemError
+      | WorkspacePaths.WorkspacePathOutsideRootError
+      | KnownWorkspaces.UnknownWorkspaceError
+    >;
+    /** Permanently deletes one file, link or folder (with its contents) inside a known workspace. */
+    readonly deleteEntry: (
+      input: ProjectDeleteEntryInput,
+    ) => Effect.Effect<
+      ProjectDeleteEntryResult,
       | WorkspaceFileSystemError
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
@@ -692,6 +704,46 @@ export const make = Effect.gen(function* () {
     return { relativePath: destination.relativePath };
   });
 
+  const deleteEntry: WorkspaceFileSystem["Service"]["deleteEntry"] = Effect.fn(
+    "WorkspaceFileSystem.deleteEntry",
+  )(function* (input) {
+    yield* knownWorkspaces.assertContains(input.cwd);
+    const target = yield* resolveWriteTarget(input);
+    const fail = (message: string) => Object.assign(new Error(message), { code: "EPERM" });
+    yield* Effect.tryPromise({
+      try: async () => {
+        const realRoot = await NodeFSP.realpath(path.resolve(input.cwd));
+        if (target.realTargetPath === realRoot) throw fail("The project root cannot be deleted.");
+        const named = await NodeFSP.lstat(target.namedTargetPath);
+        // The resolved path of a link is its target; remove the link itself.
+        if (named.isSymbolicLink()) {
+          await NodeFSP.unlink(target.namedTargetPath);
+          return;
+        }
+        // A nested repository or worktree holds history that is not in this workspace.
+        const holdsGit = await NodeFSP.lstat(path.join(target.realTargetPath, ".git")).then(
+          () => true,
+          () => false,
+        );
+        if (named.isDirectory() && holdsGit) {
+          throw fail("This folder is a git repository or worktree and cannot be deleted here.");
+        }
+        await NodeFSP.rm(target.realTargetPath, { recursive: true });
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.realTargetPath,
+          operationPath: target.realTargetPath,
+          operation: "remove",
+          cause,
+        }),
+    });
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: target.relativePath };
+  });
+
   const resolveWritePath: WorkspaceFileSystem["Service"]["resolveWritePath"] = Effect.fn(
     "WorkspaceFileSystem.resolveWritePath",
   )(function* (input) {
@@ -706,6 +758,7 @@ export const make = Effect.gen(function* () {
     writeFile,
     createDirectory,
     moveEntry,
+    deleteEntry,
     resolveWritePath,
   });
 });

@@ -298,4 +298,87 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystem entry mu
         }),
     );
   });
+
+  describe("deleteEntry", () => {
+    it.effect("deletes a file and a folder with its contents", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, "docs/deep"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(cwd, "docs/deep/a.md"), "a\n");
+        yield* fileSystem.writeFileString(path.join(cwd, "keep.md"), "keep\n");
+        yield* fileSystem.writeFileString(path.join(cwd, "drop.md"), "drop\n");
+        yield* workspaceEntries.list({ cwd });
+
+        for (const relativePath of ["drop.md", "docs"]) {
+          expect(yield* workspaceFileSystem.deleteEntry({ cwd, relativePath })).toEqual({
+            relativePath,
+          });
+        }
+
+        expect(yield* fileSystem.readDirectory(cwd)).toEqual(["keep.md"]);
+        const listed = (yield* workspaceEntries.list({ cwd })).entries.map((entry) => entry.path);
+        expect(listed).toEqual(["keep.md"]);
+      }),
+    );
+
+    it.effect("refuses the root, git folders, nested repositories and missing paths", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const outsideDir = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, ".git"));
+        yield* fileSystem.writeFileString(path.join(cwd, ".git/config"), "[core]\n");
+        yield* fileSystem.makeDirectory(path.join(cwd, "vendor/lib/.git"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(outsideDir, "o.md"), "o\n");
+
+        for (const relativePath of ["missing.md", "vendor/lib"]) {
+          const error = yield* workspaceFileSystem
+            .deleteEntry({ cwd, relativePath })
+            .pipe(Effect.flip);
+          expect(error).toMatchObject({ operation: "remove" });
+        }
+        for (const relativePath of [".git", ".git/config"]) {
+          const error = yield* workspaceFileSystem
+            .deleteEntry({ cwd, relativePath })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+        }
+        for (const relativePath of [".", "../outside", path.join(outsideDir, "o.md")]) {
+          const error = yield* workspaceFileSystem
+            .deleteEntry({ cwd, relativePath })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        }
+
+        expect(yield* fileSystem.readFileString(path.join(cwd, ".git/config"))).toBe("[core]\n");
+        expect(yield* fileSystem.exists(path.join(cwd, "vendor/lib/.git"))).toBe(true);
+        expect(yield* fileSystem.readDirectory(outsideDir)).toEqual(["o.md"]);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("removes a link without touching its target", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* fileSystem.makeDirectory(path.join(cwd, "real"));
+        yield* fileSystem.writeFileString(path.join(cwd, "real/a.md"), "a\n");
+        yield* fileSystem.symlink("real", path.join(cwd, "link-dir"));
+        yield* fileSystem.symlink("real/a.md", path.join(cwd, "link.md"));
+
+        yield* workspaceFileSystem.deleteEntry({ cwd, relativePath: "link-dir" });
+        yield* workspaceFileSystem.deleteEntry({ cwd, relativePath: "link.md" });
+
+        expect(yield* fileSystem.readDirectory(cwd)).toEqual(["real"]);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "real/a.md"))).toBe("a\n");
+      }),
+    );
+  });
 });

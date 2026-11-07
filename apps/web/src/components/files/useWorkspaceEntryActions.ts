@@ -41,6 +41,7 @@ export function useWorkspaceEntryActions(environmentId: EnvironmentId, cwd: stri
     reportFailure: false,
   });
   const moveEntry = useAtomCommand(projectEnvironment.moveEntry, { reportFailure: false });
+  const deleteEntry = useAtomCommand(projectEnvironment.deleteEntry, { reportFailure: false });
 
   // writeFile truncates an existing file, so read the folder fresh before creating.
   const findExisting = async (relativePath: string) => {
@@ -94,5 +95,11 @@ export function useWorkspaceEntryActions(environmentId: EnvironmentId, cwd: stri
     );
   };
 
-  return { create, move };
+  const remove = async (relativePath: string): Promise<WorkspaceEntryActionResult> =>
+    toActionResult(
+      await deleteEntry({ environmentId, input: { cwd, relativePath } }),
+      "Unable to delete the entry.",
+    );
+
+  return { create, move, remove };
 }

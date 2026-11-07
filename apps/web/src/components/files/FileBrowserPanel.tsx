@@ -38,6 +38,7 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useProjectPathSearch } from "~/state/queries";
 import { useEnvironmentScope } from "~/state/session";
 import { NewWorkspaceEntryButton, NewWorkspaceEntryRow } from "./NewWorkspaceEntryRow";
@@ -225,6 +226,28 @@ export default function FileBrowserPanel({
     const moved = selectedPath ? remapMovedPath(selectedPath, fromPath, toPath) : null;
     if (moved) onOpenFile(panelPath(moved));
   };
+  const deleteEntry = async (relativePath: string, isDirectory: boolean) => {
+    const name = relativePath.slice(relativePath.lastIndexOf("/") + 1);
+    const confirmed =
+      (await requestConfirmDialog(
+        `Delete "${name}"?\n${isDirectory ? "The folder and everything in it will be" : "The file will be"} deleted permanently from ${relativePath}. This cannot be undone.`,
+        { variant: "destructive" },
+      )) ?? false;
+    if (!confirmed) return;
+    const result = await entryActions.remove(relativePath);
+    if (!result.ok) {
+      if (!("interrupted" in result)) {
+        toastManager.add({
+          type: "error",
+          title: `Unable to delete ${name}`,
+          description: result.message,
+        });
+      }
+      return;
+    }
+    await load(parentWorkspacePath(relativePath), true);
+    toastManager.add({ type: "success", title: `Deleted ${name}` });
+  };
   const canDropEntries = useStableCallback(() => canCreateEntries);
   const runTreeMoves = async (moves: readonly FileTreeMove[]) => {
     for (const move of moves) {
@@ -313,6 +336,7 @@ export default function FileBrowserPanel({
                   { id: "new-file", label: "New file…", separatorBefore: true },
                   { id: "new-folder", label: "New folder…" },
                   { id: "rename", label: "Rename…" },
+                  { id: "delete", label: "Delete…", destructive: true },
                 ]
               : []),
           ],
@@ -325,6 +349,10 @@ export default function FileBrowserPanel({
             kind: clicked === "new-folder" ? "folder" : "file",
             parentPath: isDirectory ? relativePath : parentWorkspacePath(relativePath),
           });
+          return;
+        }
+        if (clicked === "delete") {
+          await deleteEntry(relativePath, isDirectory);
           return;
         }
         if (clicked === "rename") {

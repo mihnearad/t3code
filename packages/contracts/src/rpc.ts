@@ -261,6 +261,8 @@ import {
   ProjectMoveEntryResult,
   ProjectCreateUploadUrlInput,
   ProjectCreateUploadUrlResult,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
 } from "./project.ts";
 import {
   TerminalAttachInput,
@@ -422,6 +424,7 @@ export const WS_METHODS = {
   projectsCreateDirectory: "projects.createDirectory",
   projectsMoveEntry: "projects.moveEntry",
   projectsCreateUploadUrl: "projects.createUploadUrl",
+  projectsDeleteEntry: "projects.deleteEntry",
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   projectsCreateNew: "projects.createNew",
@@ -1363,6 +1366,12 @@ const WsProjectsCreateUploadUrlRpc = Rpc.make(WS_METHODS.projectsCreateUploadUrl
   error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
 });
 
+const WsProjectsDeleteEntryRpc = Rpc.make(WS_METHODS.projectsDeleteEntry, {
+  payload: ProjectDeleteEntryInput,
+  success: ProjectDeleteEntryResult,
+  error: Schema.Union([ProjectWriteFileError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   payload: ProjectMutation,
   success: Project,
@@ -2154,6 +2163,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsCreateDirectoryRpc,
   WsProjectsMoveEntryRpc,
   WsProjectsCreateUploadUrlRpc,
+  WsProjectsDeleteEntryRpc,
   WsProjectsMutateRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,

@@ -469,6 +469,7 @@ export const ProjectFileOperation = Schema.Literals([
   "make-directory",
   "write-file",
   "rename",
+  "remove",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 
@@ -542,6 +543,17 @@ export const ProjectMoveEntryResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
 });
 export type ProjectMoveEntryResult = typeof ProjectMoveEntryResult.Type;
+
+export const ProjectDeleteEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectDeleteEntryInput = typeof ProjectDeleteEntryInput.Type;
+
+export const ProjectDeleteEntryResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectDeleteEntryResult = typeof ProjectDeleteEntryResult.Type;
 
 /** Largest file a client may upload into a workspace in one request. */
 export const PROJECT_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
