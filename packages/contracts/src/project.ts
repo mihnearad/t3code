@@ -468,6 +468,7 @@ export const ProjectFileOperation = Schema.Literals([
   "close",
   "make-directory",
   "write-file",
+  "rename",
 ]);
 export type ProjectFileOperation = typeof ProjectFileOperation.Type;
 
@@ -529,6 +530,18 @@ export const ProjectCreateDirectoryResult = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
 });
 export type ProjectCreateDirectoryResult = typeof ProjectCreateDirectoryResult.Type;
+
+export const ProjectMoveEntryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  fromPath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  toPath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectMoveEntryInput = typeof ProjectMoveEntryInput.Type;
+
+export const ProjectMoveEntryResult = Schema.Struct({
+  relativePath: TrimmedNonEmptyString,
+});
+export type ProjectMoveEntryResult = typeof ProjectMoveEntryResult.Type;
 
 export const ProjectEnsureScratchResult = Schema.Struct({
   projectId: ProjectId,

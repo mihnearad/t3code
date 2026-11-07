@@ -12,6 +12,8 @@ import type {
   ProjectWriteFileResult,
   ProjectCreateDirectoryInput,
   ProjectCreateDirectoryResult,
+  ProjectMoveEntryInput,
+  ProjectMoveEntryResult,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -53,6 +55,7 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedError<Worksp
       "close",
       "make-directory",
       "write-file",
+      "rename",
     ]),
     cause: Schema.Defect(),
   },
@@ -137,6 +140,15 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectCreateDirectoryInput,
     ) => Effect.Effect<
       ProjectCreateDirectoryResult,
+      | WorkspaceFileSystemError
+      | WorkspacePaths.WorkspacePathOutsideRootError
+      | KnownWorkspaces.UnknownWorkspaceError
+    >;
+    /** Renames or moves one file or folder inside a known workspace; never replaces an entry. */
+    readonly moveEntry: (
+      input: ProjectMoveEntryInput,
+    ) => Effect.Effect<
+      ProjectMoveEntryResult,
       | WorkspaceFileSystemError
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
@@ -548,7 +560,7 @@ export const make = Effect.gen(function* () {
         resolvedPath: realTargetPath,
       });
     }
-    return { relativePath: target.relativePath, realTargetPath };
+    return { relativePath: target.relativePath, realTargetPath, namedTargetPath };
   });
 
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
@@ -630,7 +642,54 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile, createDirectory });
+  const moveEntry: WorkspaceFileSystem["Service"]["moveEntry"] = Effect.fn(
+    "WorkspaceFileSystem.moveEntry",
+  )(function* (input) {
+    yield* knownWorkspaces.assertContains(input.cwd);
+    const source = yield* resolveWriteTarget({ cwd: input.cwd, relativePath: input.fromPath });
+    const destination = yield* resolveWriteTarget({ cwd: input.cwd, relativePath: input.toPath });
+    const fail = (message: string, code: string) => Object.assign(new Error(message), { code });
+    yield* Effect.tryPromise({
+      try: async () => {
+        const realRoot = await NodeFSP.realpath(path.resolve(input.cwd));
+        if (source.realTargetPath === realRoot)
+          throw fail("The project root cannot be moved.", "EPERM");
+        // The resolved path of a link is its target, so moving it would move the target instead.
+        if ((await NodeFSP.lstat(source.namedTargetPath)).isSymbolicLink()) {
+          throw fail("Moving symbolic links is not supported.", "EPERM");
+        }
+        // rename() silently replaces an existing file.
+        const destinationExists = await NodeFSP.lstat(destination.realTargetPath).then(
+          () => true,
+          (error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return false;
+            throw error;
+          },
+        );
+        if (destinationExists) throw fail(`'${input.toPath}' already exists.`, "EEXIST");
+        await NodeFSP.rename(source.realTargetPath, destination.realTargetPath);
+      },
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.fromPath,
+          resolvedPath: source.realTargetPath,
+          operationPath: destination.realTargetPath,
+          operation: "rename",
+          cause,
+        }),
+    });
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: destination.relativePath };
+  });
+
+  return WorkspaceFileSystem.of({
+    getMetadata,
+    readFile,
+    writeFile,
+    createDirectory,
+    moveEntry,
+  });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

@@ -1,4 +1,4 @@
-import { FilePlusIcon, FolderPlusIcon } from "lucide-react";
+import { FilePlusIcon, FolderPlusIcon, PencilIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -30,19 +30,26 @@ export function NewWorkspaceEntryButton(props: { kind: WorkspaceEntryKind; onCli
   );
 }
 
-/** Inline name field shown above the file tree while a new file or folder is being named. */
+/** Inline name field shown above the file tree while an entry is created or renamed. */
 export function NewWorkspaceEntryRow(props: {
   kind: WorkspaceEntryKind;
   parentPath: string;
+  /** Set when renaming: the entry's current name. */
+  currentName?: string;
   /** Resolves to an error message, or null once the entry exists. */
   onSubmit: (name: string) => Promise<string | null>;
   onCancel: () => void;
 }) {
-  const [value, setValue] = useState("");
+  const renaming = props.currentName !== undefined;
+  const [value, setValue] = useState(props.currentName ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const Icon = props.kind === "folder" ? FolderPlusIcon : FilePlusIcon;
-  const label = props.kind === "folder" ? "New folder name" : "New file name";
+  const Icon = renaming ? PencilIcon : props.kind === "folder" ? FolderPlusIcon : FilePlusIcon;
+  const label = renaming
+    ? `Rename ${props.currentName}`
+    : props.kind === "folder"
+      ? "New folder name"
+      : "New file name";
 
   const submit = async () => {
     if (busy) return;
@@ -72,6 +79,13 @@ export function NewWorkspaceEntryRow(props: {
           aria-invalid={error !== null}
           placeholder={props.kind === "folder" ? "folder-name" : "file-name.ext"}
           autoFocus
+          onFocus={(event) => {
+            if (!renaming) return;
+            // Select the base name so typing keeps the extension, as file managers do.
+            const name = event.currentTarget.value;
+            const dot = props.kind === "file" ? name.lastIndexOf(".") : -1;
+            event.currentTarget.setSelectionRange(0, dot > 0 ? dot : name.length);
+          }}
           spellCheck={false}
           autoComplete="off"
           disabled={busy}

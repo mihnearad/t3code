@@ -228,6 +228,15 @@ export function createProjectEnvironmentAtoms<R, E>(
             fileMetadata.refreshPath(environmentId, path, registry);
         }),
     }),
+    moveEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:move-entry",
+      tag: WS_METHODS.projectsMoveEntry,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.cwd}`,
+      },
+    }),
     createDirectory: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:projects:create-directory",
       tag: WS_METHODS.projectsCreateDirectory,

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   joinWorkspacePath,
   parentWorkspacePath,
+  remapMovedPath,
   validateWorkspaceEntryName,
 } from "./workspaceEntryName";
 
@@ -39,5 +40,12 @@ describe("workspace paths", () => {
     expect(joinWorkspacePath("src/lib", "a.txt")).toBe("src/lib/a.txt");
     expect(parentWorkspacePath("a.txt")).toBe("");
     expect(parentWorkspacePath("src/lib/a.txt")).toBe("src/lib");
+  });
+
+  it("follows an open file through a move of itself or of a folder above it", () => {
+    expect(remapMovedPath("a.md", "a.md", "docs/a.md")).toBe("docs/a.md");
+    expect(remapMovedPath("src/lib/a.ts", "src/lib", "core")).toBe("core/a.ts");
+    expect(remapMovedPath("src/library/a.ts", "src/lib", "core")).toBeNull();
+    expect(remapMovedPath("b.md", "a.md", "c.md")).toBeNull();
   });
 });

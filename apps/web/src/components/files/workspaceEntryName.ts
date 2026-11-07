@@ -28,6 +28,12 @@ export function joinWorkspacePath(parentPath: string, name: string): string {
   return parentPath ? `${parentPath}/${name}` : name;
 }
 
+/** Where a path ends up after `fromPath` moves to `toPath`, or null when the move leaves it alone. */
+export function remapMovedPath(path: string, fromPath: string, toPath: string): string | null {
+  if (path === fromPath) return toPath;
+  return path.startsWith(`${fromPath}/`) ? `${toPath}${path.slice(fromPath.length)}` : null;
+}
+
 export function parentWorkspacePath(path: string): string {
   return path.slice(0, Math.max(0, path.lastIndexOf("/")));
 }
