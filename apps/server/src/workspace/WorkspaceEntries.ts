@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -27,6 +28,7 @@ import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { isUploadPartFileName } from "./UploadPartFile.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
 
@@ -165,43 +167,79 @@ export const make = Effect.gen(function* () {
     return yield* workspacePaths.normalizeWorkspaceRoot(cwd);
   });
 
+  const rescan = Effect.fn("WorkspaceEntries.rescan")(function* (cwd: string) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
+      const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
+      if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
+        continue;
+      }
+      const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(function* (
+        cause:
+          | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
+          | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
+          | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
+      ) {
+        yield* Effect.logWarning("Failed to refresh workspace search index", {
+          cwd,
+          variant,
+          cause,
+        });
+        yield* workspaceSearchIndexes.invalidate(indexKey);
+      });
+      yield* Effect.gen(function* () {
+        const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
+        yield* searchIndex.refresh();
+      }).pipe(
+        Effect.provide(workspaceSearchIndexes.get(indexKey)),
+        Effect.catchTags({
+          WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
+          WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
+          WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
+        }),
+      );
+    }
+  });
+
+  // One rescan per cwd at a time. A caller joins the next rescan, which starts after the caller
+  // asked, so refresh still returns only once changes made before the call are indexed.
+  const refreshStates = new Map<string, { queued: Deferred.Deferred<void> | undefined }>();
+
+  const drainRescans = Effect.fn("WorkspaceEntries.drainRescans")(function* (
+    cwd: string,
+    state: { queued: Deferred.Deferred<void> | undefined },
+    first: Deferred.Deferred<void>,
+  ) {
+    let current: Deferred.Deferred<void> | undefined = first;
+    while (current) {
+      yield* rescan(cwd).pipe(Effect.ignoreCause({ log: true }));
+      yield* Deferred.succeed(current, undefined);
+      current = yield* Effect.sync(() => {
+        const next = state.queued;
+        state.queued = undefined;
+        if (!next) refreshStates.delete(cwd);
+        return next;
+      });
+    }
+  });
+
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
-      const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
-        Effect.orElseSucceed(() => cwd),
-      );
-      for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
-        const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
-        if (!(yield* RcMap.has(workspaceSearchIndexes.rcMap, indexKey))) {
-          continue;
+      const mine = yield* Deferred.make<void>();
+      const joined = yield* Effect.sync(() => {
+        const running = refreshStates.get(cwd);
+        if (running) {
+          running.queued ??= mine;
+          return { wait: running.queued, started: undefined };
         }
-        const recoverRefreshFailure = Effect.fn("WorkspaceEntries.recoverRefreshFailure")(
-          function* (
-            cause:
-              | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
-              | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
-              | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
-          ) {
-            yield* Effect.logWarning("Failed to refresh workspace search index", {
-              cwd,
-              variant,
-              cause,
-            });
-            yield* workspaceSearchIndexes.invalidate(indexKey);
-          },
-        );
-        yield* Effect.gen(function* () {
-          const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-          yield* searchIndex.refresh();
-        }).pipe(
-          Effect.provide(workspaceSearchIndexes.get(indexKey)),
-          Effect.catchTags({
-            WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
-            WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
-            WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
-          }),
-        );
+        const started: { queued: Deferred.Deferred<void> | undefined } = { queued: undefined };
+        refreshStates.set(cwd, started);
+        return { wait: mine, started };
+      });
+      if (joined.started) {
+        yield* Effect.forkDetach(drainRescans(cwd, joined.started, mine));
       }
+      yield* Deferred.await(joined.wait);
     },
   );
 
@@ -374,7 +412,8 @@ export const make = Effect.gen(function* () {
                   children
                     .slice(offset, offset + SYMLINK_RESOLVE_BATCH_SIZE)
                     .map(async (child): Promise<ProjectEntry["kind"] | undefined> => {
-                      if (child.name === ".git") return undefined;
+                      if (child.name === ".git" || isUploadPartFileName(child.name))
+                        return undefined;
                       if (child.isDirectory()) return "directory";
                       if (child.isFile()) return "file";
                       return child.isSymbolicLink() ? resolveSymlinkKind(child.name) : undefined;

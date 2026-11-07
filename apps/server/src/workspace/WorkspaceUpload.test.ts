@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { PROJECT_UPLOAD_URL_TTL_MS } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -319,6 +320,7 @@ it.layer(layerTest)("WorkspaceUpload", (it) => {
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         yield* fileSystem.writeFileString(path.join(cwd, "swap.bin"), "old");
+        yield* fileSystem.chmod(path.join(cwd, "swap.bin"), 0o750);
 
         const result = yield* storeWorkspaceUpload(
           claimsFor(cwd, "swap.bin", BYTES.byteLength, true),
@@ -326,6 +328,9 @@ it.layer(layerTest)("WorkspaceUpload", (it) => {
         );
 
         expect(result).toEqual({ status: "written", relativePath: "swap.bin", replaced: true });
+        if (!(yield* HostProcess.isWindows)) {
+          expect((yield* fileSystem.stat(path.join(cwd, "swap.bin"))).mode & 0o777).toBe(0o750);
+        }
         expect(Array.from(yield* fileSystem.readFile(path.join(cwd, "swap.bin")))).toEqual(
           Array.from(BYTES),
         );
@@ -340,11 +345,18 @@ it.layer(layerTest)("WorkspaceUpload", (it) => {
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
 
-        for (const body of [BYTES.slice(0, 4), new Uint8Array([...BYTES, 1])]) {
+        const tooLong = new Uint8Array([...BYTES, 1]);
+        const bodies = [
+          Stream.make(BYTES.slice(0, 4)),
+          Stream.make(tooLong),
+          // Reading stops at the limit, so the rest of an endless body is never pulled.
+          Stream.concat(Stream.make(tooLong), Stream.die("read past the size limit")),
+        ];
+        for (const body of bodies) {
           for (const overwrite of [false, true]) {
             const result = yield* storeWorkspaceUpload(
               claimsFor(cwd, "dir/sized.bin", BYTES.byteLength, overwrite),
-              Stream.make(body),
+              body,
             );
             expect(result).toMatchObject({ status: "rejected", httpStatus: 400 });
             expect(yield* fileSystem.exists(path.join(cwd, "dir/sized.bin"))).toBe(false);

@@ -30,6 +30,7 @@ export interface WorkspaceUploadProgress {
 }
 
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
+const UPLOAD_CONCURRENCY = 3;
 
 function postBytes(
   url: string,
@@ -69,7 +70,8 @@ interface UploadBatch {
     input: ProjectCreateUploadUrlInput;
   }) => Promise<AtomCommandResult<ProjectCreateUploadUrlResult, unknown>>;
   readonly setProgress: (progress: WorkspaceUploadProgress | null) => void;
-  readonly setAbort: (abort: (() => void) | null) => void;
+  /** Registers an in-flight request's abort; the returned function unregisters it. */
+  readonly addAbort: (abort: () => void) => () => void;
   readonly isCancelled: () => boolean;
   readonly onFoldersChanged: (folders: ReadonlySet<string>) => void;
 }
@@ -88,20 +90,27 @@ async function runUploadBatch(batch: UploadBatch) {
   let bytesDone = 0;
   let filesDone = 0;
   let uploaded = 0;
+  let currentPath: string | null = null;
+  const inFlightBytes = new Map<DroppedFile, number>();
   const changedFolders = new Set<string>();
-  const report = (currentPath: string | null, currentBytes = 0) =>
+  const report = () => {
+    let active = 0;
+    for (const loaded of inFlightBytes.values()) active += loaded;
     batch.setProgress({
       fileCount: files.length,
       filesDone,
       bytesTotal,
-      bytesDone: bytesDone + currentBytes,
+      bytesDone: bytesDone + active,
       currentPath,
     });
+  };
 
   // "exists" when overwrite is off and the file is already there.
   const uploadOne = async (dropped: DroppedFile, overwrite: boolean) => {
     const relativePath = joinWorkspacePath(batch.folderPath, dropped.relativePath);
-    report(relativePath);
+    currentPath = relativePath;
+    inFlightBytes.set(dropped, 0);
+    report();
     const issued = await batch.createUploadUrl({
       environmentId: batch.environmentId,
       input: { cwd: batch.cwd, relativePath, sizeBytes: dropped.file.size, overwrite },
@@ -113,7 +122,23 @@ async function runUploadBatch(batch: UploadBatch) {
       ? resolveAssetUrl(connection.httpBaseUrl, issued.value.relativeUrl)
       : null;
     if (!url) throw new Error("The environment is not connected.");
-    await postBytes(url, dropped.file, (loaded) => report(relativePath, loaded), batch.setAbort);
+    if (batch.isCancelled()) throw new Error("Upload cancelled.");
+    let unregister = () => {};
+    try {
+      await postBytes(
+        url,
+        dropped.file,
+        (loaded) => {
+          inFlightBytes.set(dropped, loaded);
+          report();
+        },
+        (abort) => {
+          unregister = batch.addAbort(abort);
+        },
+      );
+    } finally {
+      unregister();
+    }
     changedFolders.add(parentWorkspacePath(relativePath));
     uploaded += 1;
     return "uploaded";
@@ -121,20 +146,27 @@ async function runUploadBatch(batch: UploadBatch) {
 
   const uploadAll = async (queue: readonly DroppedFile[], overwrite: boolean) => {
     const existing: DroppedFile[] = [];
-    for (const dropped of queue) {
-      if (batch.isCancelled()) break;
-      try {
-        if ((await uploadOne(dropped, overwrite)) === "exists") {
-          existing.push(dropped);
-          continue;
+    let next = 0;
+    const worker = async () => {
+      while (!batch.isCancelled() && next < queue.length) {
+        const dropped = queue[next++]!;
+        try {
+          if ((await uploadOne(dropped, overwrite)) === "exists") {
+            existing.push(dropped);
+            continue;
+          }
+          bytesDone += dropped.file.size;
+        } catch (error) {
+          if (batch.isCancelled()) break;
+          failures.push(`${dropped.relativePath}: ${describeError(error)}`);
+        } finally {
+          inFlightBytes.delete(dropped);
         }
-        bytesDone += dropped.file.size;
-      } catch (error) {
-        if (batch.isCancelled()) break;
-        failures.push(`${dropped.relativePath}: ${describeError(error)}`);
+        filesDone += 1;
+        report();
       }
-      filesDone += 1;
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, queue.length) }, worker));
     return existing;
   };
 
@@ -155,7 +187,6 @@ async function runUploadBatch(batch: UploadBatch) {
       }
     }
   } finally {
-    batch.setAbort(null);
     batch.setProgress(null);
     if (changedFolders.size > 0) batch.onFoldersChanged(changedFolders);
   }
@@ -182,18 +213,18 @@ async function runUploadBatch(batch: UploadBatch) {
   }
 }
 
-/** Uploads dropped files into a workspace folder, one at a time, and reports progress. */
+/** Uploads dropped files into a workspace folder, a few at a time, and reports progress. */
 export function useWorkspaceUpload(environmentId: EnvironmentId, cwd: string) {
   const createUploadUrl = useAtomCommand(projectEnvironment.createUploadUrl, {
     reportFailure: false,
   });
   const [progress, setProgress] = useState<WorkspaceUploadProgress | null>(null);
-  const abortRef = useRef<(() => void) | null>(null);
+  const abortsRef = useRef(new Set<() => void>());
   const cancelledRef = useRef(false);
 
   const cancel = () => {
     cancelledRef.current = true;
-    abortRef.current?.();
+    for (const abort of abortsRef.current) abort();
   };
 
   const start = (input: {
@@ -211,8 +242,11 @@ export function useWorkspaceUpload(environmentId: EnvironmentId, cwd: string) {
       cwd,
       createUploadUrl,
       setProgress,
-      setAbort: (abort) => {
-        abortRef.current = abort;
+      addAbort: (abort) => {
+        abortsRef.current.add(abort);
+        return () => {
+          abortsRef.current.delete(abort);
+        };
       },
       isCancelled: () => cancelledRef.current,
     });

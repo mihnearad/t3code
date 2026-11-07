@@ -552,6 +552,14 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
           "export const edited = true;\n",
         );
+
+        const error = yield* workspaceFileSystem
+          .writeFile({ cwd, relativePath: "src/main.ts", contents: "", createOnly: true })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ operation: "write-file" });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "src/main.ts"))).toBe(
+          "export const edited = true;\n",
+        );
       }).pipe(
         Effect.provide(
           Layer.fresh(WorkspaceFileSystem.layer).pipe(

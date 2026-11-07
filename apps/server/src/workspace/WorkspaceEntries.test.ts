@@ -96,6 +96,24 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("list", () => {
+    it.effect("hides upload part files from folder and index listings", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-part-files-" });
+        const partName = ".a.txt.0b9f6d62-4c1e-4f55-9a63-1d2f3a4b5c6d.t3-upload";
+        yield* writeTextFile(cwd, "a.txt");
+        yield* writeTextFile(cwd, partName);
+        yield* writeTextFile(cwd, `sub/${partName}`);
+
+        const folder = yield* workspaceEntries.list({ cwd, directoryPath: "" });
+        expect(folder.entries.map((entry) => entry.path)).toEqual(["a.txt", "sub"]);
+        const index = yield* workspaceEntries.list({ cwd });
+        expect(index.entries.map((entry) => entry.path)).toEqual(["a.txt", "sub"]);
+        const found = yield* searchWorkspaceEntries({ cwd, query: "t3-upload", limit: 10 });
+        expect(found.entries).toEqual([]);
+      }),
+    );
+
     it.effect("lists immediate children including ignored and empty directories", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });
@@ -787,6 +805,42 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect(result.matches.map((match) => match.path)).toEqual(["src/notes.ts"]);
         // The second search ran on the rescanned live finder, not a rebuild.
         expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
+      }),
+    );
+  });
+
+  describe("refresh", () => {
+    it.effect("coalesces concurrent refreshes and still indexes earlier changes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-refresh-coalesce-" });
+        yield* writeTextFile(cwd, "before.txt");
+        let rescans = 0;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            const scanFiles = finder.scanFiles.bind(finder);
+            finder.scanFiles = () => {
+              rescans += 1;
+              return scanFiles();
+            };
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        yield* workspaceEntries.list({ cwd });
+
+        yield* writeTextFile(cwd, "after.txt");
+        yield* Effect.all(
+          Array.from({ length: 10 }, () => workspaceEntries.refresh(cwd)),
+          { concurrency: "unbounded" },
+        );
+
+        expect(rescans).toBeGreaterThan(0);
+        expect(rescans).toBeLessThanOrEqual(2);
+        const listed = yield* workspaceEntries.list({ cwd });
+        expect(listed.entries.map((entry) => entry.path)).toContain("after.txt");
       }),
     );
   });

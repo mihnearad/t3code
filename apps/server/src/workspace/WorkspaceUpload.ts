@@ -20,6 +20,7 @@ import * as AssetSigner from "../assets/AssetSigner.ts";
 import { base64UrlDecodeUtf8, base64UrlEncode } from "../auth/utils.ts";
 import { requestUrl } from "../requestUrl.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
+import { uploadPartFileName } from "./UploadPartFile.ts";
 import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 
 export const WORKSPACE_UPLOAD_ROUTE_PREFIX = "/api/workspace/upload";
@@ -176,7 +177,7 @@ export const storeWorkspaceUpload = Effect.fn("WorkspaceUpload.store")(function*
   const partId = yield* (yield* SecureRandom.SecureRandom).uuidV4();
   const partPath = path.join(
     path.dirname(realTargetPath),
-    `.${path.basename(realTargetPath)}.${partId}.t3-upload`,
+    uploadPartFileName(path.basename(realTargetPath), partId),
   );
   const fail = (cause: unknown) => operationError(claims, realTargetPath, cause);
 
@@ -202,11 +203,16 @@ export const storeWorkspaceUpload = Effect.fn("WorkspaceUpload.store")(function*
     }),
     (handle) => {
       let received = 0;
-      return Stream.runForEach(body, (chunk) => {
-        received += chunk.byteLength;
-        if (received > claims.sizeBytes) return Effect.void;
-        return Effect.tryPromise({ try: () => handle.write(chunk), catch: fail });
-      }).pipe(Effect.map(() => received));
+      // Stop pulling once the body passes the claimed size, so a chunked body cannot run on.
+      return body.pipe(
+        Stream.takeUntil((chunk) => (received += chunk.byteLength) > claims.sizeBytes),
+        Stream.runForEach((chunk) =>
+          received > claims.sizeBytes
+            ? Effect.void
+            : Effect.tryPromise({ try: () => handle.write(chunk), catch: fail }),
+        ),
+        Effect.map(() => received),
+      );
     },
     (handle) => Effect.promise(() => handle.close()),
   ).pipe(Effect.onError(() => removePart));
@@ -227,6 +233,8 @@ export const storeWorkspaceUpload = Effect.fn("WorkspaceUpload.store")(function*
         if (existing?.isDirectory()) {
           throw Object.assign(new Error("A folder already has this name."), { code: "EISDIR" });
         }
+        // Keep the replaced file's permissions, such as a script's execute bit.
+        if (existing) await NodeFSP.chmod(partPath, existing.mode & 0o7777);
         await NodeFSP.rename(partPath, realTargetPath);
         return existing ? "replaced" : "written";
       }

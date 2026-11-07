@@ -43,7 +43,7 @@ export function useWorkspaceEntryActions(environmentId: EnvironmentId, cwd: stri
   const moveEntry = useAtomCommand(projectEnvironment.moveEntry, { reportFailure: false });
   const deleteEntry = useAtomCommand(projectEnvironment.deleteEntry, { reportFailure: false });
 
-  // writeFile truncates an existing file, so read the folder fresh before creating.
+  // The server refuses existing names too; this check gives a clearer message first.
   const findExisting = async (relativePath: string) => {
     const result = await executeAtomQuery(
       appAtomRegistry,
@@ -80,7 +80,10 @@ export function useWorkspaceEntryActions(environmentId: EnvironmentId, cwd: stri
           "Unable to create the folder.",
         )
       : toActionResult(
-          await writeFile({ environmentId, input: { cwd, relativePath, contents: "" } }),
+          await writeFile({
+            environmentId,
+            input: { cwd, relativePath, contents: "", createOnly: true },
+          }),
           "Unable to create the file.",
         );
   };

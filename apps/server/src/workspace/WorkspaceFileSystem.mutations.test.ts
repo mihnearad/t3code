@@ -335,9 +335,11 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystem entry mu
         yield* fileSystem.makeDirectory(path.join(cwd, ".git"));
         yield* fileSystem.writeFileString(path.join(cwd, ".git/config"), "[core]\n");
         yield* fileSystem.makeDirectory(path.join(cwd, "vendor/lib/.git"), { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(cwd, "apps/web/deep"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(cwd, "apps/web/deep/.git"), "gitdir: x\n");
         yield* fileSystem.writeFileString(path.join(outsideDir, "o.md"), "o\n");
 
-        for (const relativePath of ["missing.md", "vendor/lib"]) {
+        for (const relativePath of ["missing.md", "vendor/lib", "vendor", "apps"]) {
           const error = yield* workspaceFileSystem
             .deleteEntry({ cwd, relativePath })
             .pipe(Effect.flip);
@@ -358,6 +360,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystem entry mu
 
         expect(yield* fileSystem.readFileString(path.join(cwd, ".git/config"))).toBe("[core]\n");
         expect(yield* fileSystem.exists(path.join(cwd, "vendor/lib/.git"))).toBe(true);
+        expect(yield* fileSystem.exists(path.join(cwd, "apps/web/deep/.git"))).toBe(true);
         expect(yield* fileSystem.readDirectory(outsideDir)).toEqual(["o.md"]);
       }),
     );

@@ -242,6 +242,17 @@ export const make = Effect.gen(function* () {
   };
 
   // Reject Git folders, including renamed bare repos whose config/hooks can execute; paths must be normalized.
+  // Links are not followed: rm removes a link, not what it points to.
+  const containsGitEntry = async (folder: string): Promise<boolean> => {
+    for (const entry of await NodeFSP.readdir(folder, { withFileTypes: true })) {
+      if (isGitMetadataName(entry.name)) return true;
+      if (entry.isDirectory() && (await containsGitEntry(path.join(folder, entry.name)))) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   // Stop at linked worktrees' .git files since worktrees can sit inside bare repos.
   const isInGitFolder = async (absolutePath: string) => {
     if (absolutePath.split(path.sep).some(isGitMetadataName)) return true;
@@ -614,7 +625,7 @@ export const make = Effect.gen(function* () {
           flag:
             NodeFS.constants.O_WRONLY |
             NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
+            (input.createOnly ? NodeFS.constants.O_EXCL : NodeFS.constants.O_TRUNC) |
             (NodeFS.constants.O_NOFOLLOW ?? 0),
         }),
       catch: (cause) =>
@@ -721,12 +732,8 @@ export const make = Effect.gen(function* () {
           return;
         }
         // A nested repository or worktree holds history that is not in this workspace.
-        const holdsGit = await NodeFSP.lstat(path.join(target.realTargetPath, ".git")).then(
-          () => true,
-          () => false,
-        );
-        if (named.isDirectory() && holdsGit) {
-          throw fail("This folder is a git repository or worktree and cannot be deleted here.");
+        if (named.isDirectory() && (await containsGitEntry(target.realTargetPath))) {
+          throw fail("This folder holds a git repository or worktree and cannot be deleted here.");
         }
         await NodeFSP.rm(target.realTargetPath, { recursive: true });
       },

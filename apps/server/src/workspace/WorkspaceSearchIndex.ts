@@ -27,6 +27,8 @@ import type {
 } from "@t3tools/contracts";
 import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 
+import { isUploadPartFilePath } from "./UploadPartFile.ts";
+
 // fff-node's native library stays external; single-executables require disk packages instead of importing them.
 const requireForFff = NodeModule.createRequire(import.meta.url);
 const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
@@ -136,7 +138,7 @@ function parentPathOf(input: string): string | undefined {
 
 function toProjectEntry(item: MixedItem): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.item.relativePath));
-  if (!normalizedPath) {
+  if (!normalizedPath || isUploadPartFilePath(normalizedPath)) {
     return null;
   }
 
@@ -148,7 +150,9 @@ function toProjectEntry(item: MixedItem): ProjectEntry | null {
 
 function toFileEntry(item: FileItem): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath));
-  return normalizedPath ? { path: normalizedPath, kind: "file" } : null;
+  return normalizedPath && !isUploadPartFilePath(normalizedPath)
+    ? { path: normalizedPath, kind: "file" }
+    : null;
 }
 
 function toDirectoryEntry(item: DirItem): ProjectEntry | null {
@@ -510,6 +514,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }
 
       for (const match of result.items) {
+        if (isUploadPartFilePath(match.relativePath)) continue;
         const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
           (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
         );
