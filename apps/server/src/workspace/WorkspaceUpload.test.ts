@@ -237,11 +237,16 @@ it.layer(layerTest)("WorkspaceUpload", (it) => {
         const cwd = yield* makeTempDir;
         const token = yield* issueToken(cwd);
         const [payload = "", signature = ""] = token.split(".");
-        const flipLast = (value: string) =>
-          `${value.slice(0, -1)}${value.endsWith("A") ? "B" : "A"}`;
+        // The last base64 character can hold padding bits that decoders ignore, so change the first.
+        const flipFirst = (value: string) =>
+          `${value.startsWith("A") ? "B" : "A"}${value.slice(1)}`;
 
-        expect(yield* validateWorkspaceUploadToken(`${flipLast(payload)}.${signature}`)).toBeNull();
-        expect(yield* validateWorkspaceUploadToken(`${payload}.${flipLast(signature)}`)).toBeNull();
+        expect(
+          yield* validateWorkspaceUploadToken(`${flipFirst(payload)}.${signature}`),
+        ).toBeNull();
+        expect(
+          yield* validateWorkspaceUploadToken(`${payload}.${flipFirst(signature)}`),
+        ).toBeNull();
         expect(yield* validateWorkspaceUploadToken(`${token}.extra`)).toBeNull();
         expect(yield* validateWorkspaceUploadToken(payload)).toBeNull();
         expect(yield* validateWorkspaceUploadToken("garbage")).toBeNull();
