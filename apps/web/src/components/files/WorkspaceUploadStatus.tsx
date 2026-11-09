@@ -1,15 +1,14 @@
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { useSyncExternalStore } from "react";
 
 import { Button } from "~/components/ui/button";
 
-import type { WorkspaceUploadProgress } from "./useWorkspaceUpload";
+import type { UploadProgressStore } from "./uploadProgressStore";
 
 /** Upload progress shown above the file tree while dropped files are sent to the server. */
-export function WorkspaceUploadStatus(props: {
-  progress: WorkspaceUploadProgress;
-  onCancel: () => void;
-}) {
-  const { progress } = props;
+export function WorkspaceUploadStatus(props: { store: UploadProgressStore; onCancel: () => void }) {
+  const progress = useSyncExternalStore(props.store.subscribe, props.store.get);
+  if (!progress) return null;
   const fraction = progress.bytesTotal > 0 ? progress.bytesDone / progress.bytesTotal : 0;
   const current = Math.min(progress.filesDone + 1, progress.fileCount);
   return (

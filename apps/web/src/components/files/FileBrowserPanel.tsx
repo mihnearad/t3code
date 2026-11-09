@@ -203,9 +203,8 @@ export default function FileBrowserPanel({
       folderPath,
       files,
       skipped,
-      onFoldersChanged: () => {
-        refresh();
-        void load(folderPath, true);
+      onFoldersChanged: (folders) => {
+        for (const folder of folders) void load(folder, true);
         expandFolder(folderPath);
       },
     });
@@ -297,6 +296,7 @@ export default function FileBrowserPanel({
   );
   const { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths } =
     buildTreeEntries(directoryEntries, pathSearch.entries, pathSearch.isPending, query);
+
   const entryKindsRef = useRef(entryKinds);
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
@@ -654,7 +654,7 @@ export default function FileBrowserPanel({
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
       onDragOver={(event) => {
-        if (isFinderFileDrag(event) && canCreateEntries && !upload.progress) {
+        if (isFinderFileDrag(event) && canCreateEntries && !upload.progressStore.isActive()) {
           event.preventDefault();
           event.dataTransfer.dropEffect = "copy";
           const folder = fileDropFolder(event.nativeEvent);
@@ -678,7 +678,7 @@ export default function FileBrowserPanel({
       onDrop={(event) => {
         setRootDropHighlight(event.currentTarget, false);
         if (isFinderFileDrag(event)) {
-          if (!canCreateEntries || upload.progress) return;
+          if (!canCreateEntries || upload.progressStore.isActive()) return;
           event.preventDefault();
           void uploadDroppedFiles(
             fileDropFolder(event.nativeEvent),
@@ -747,9 +747,7 @@ export default function FileBrowserPanel({
           </Tooltip>
         ) : null}
       </div>
-      {upload.progress ? (
-        <WorkspaceUploadStatus progress={upload.progress} onCancel={upload.cancel} />
-      ) : null}
+      <WorkspaceUploadStatus store={upload.progressStore} onCancel={upload.cancel} />
       {newEntry ? (
         <NewWorkspaceEntryRow
           key={`${newEntry.kind}:${newEntry.parentPath}:${newEntry.renamePath ?? ""}`}

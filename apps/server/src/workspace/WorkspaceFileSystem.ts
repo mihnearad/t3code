@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import type {
   FilesystemEntryMetadata,
@@ -39,6 +40,43 @@ const PROJECT_READ_FILE_MAX_BYTES = 1024 * 1024;
 const isGitMetadataName = (segment: string) => {
   const name = (segment.split(":")[0] ?? "").replace(/[. ]+$/, "").toUpperCase();
   return name === ".GIT" || name === "GIT~1";
+};
+
+const GIT_SCAN_CONCURRENCY = 8;
+
+// Reject Git folders, including renamed bare repos whose config/hooks can execute; paths must be normalized.
+// Links are not followed: rm removes a link, not what it points to. Reads a level at a time, a few
+// folders in parallel, and stops at the first Git entry. A read failure fails the scan.
+export const containsGitEntry = async (
+  folder: string,
+  readDirectory: (folder: string) => Promise<ReadonlyArray<NodeFS.Dirent>> = (target) =>
+    NodeFSP.readdir(target, { withFileTypes: true }),
+): Promise<boolean> => {
+  let level = [folder];
+  while (level.length > 0) {
+    const current = level;
+    const next: string[] = [];
+    let cursor = 0;
+    let found = false;
+    const worker = async () => {
+      while (!found && cursor < current.length) {
+        const directory = current[cursor++]!;
+        for (const entry of await readDirectory(directory)) {
+          if (isGitMetadataName(entry.name)) {
+            found = true;
+            return;
+          }
+          if (entry.isDirectory()) next.push(NodePath.join(directory, entry.name));
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(GIT_SCAN_CONCURRENCY, current.length) }, worker),
+    );
+    if (found) return true;
+    level = next;
+  }
+  return false;
 };
 
 export class WorkspaceFileSystemOperationError extends Schema.TaggedError<WorkspaceFileSystemOperationError>()(
@@ -239,18 +277,6 @@ export const make = Effect.gen(function* () {
       relative === ".." ||
       path.isAbsolute(relative)
     );
-  };
-
-  // Reject Git folders, including renamed bare repos whose config/hooks can execute; paths must be normalized.
-  // Links are not followed: rm removes a link, not what it points to.
-  const containsGitEntry = async (folder: string): Promise<boolean> => {
-    for (const entry of await NodeFSP.readdir(folder, { withFileTypes: true })) {
-      if (isGitMetadataName(entry.name)) return true;
-      if (entry.isDirectory() && (await containsGitEntry(path.join(folder, entry.name)))) {
-        return true;
-      }
-    }
-    return false;
   };
 
   // Stop at linked worktrees' .git files since worktrees can sit inside bare repos.

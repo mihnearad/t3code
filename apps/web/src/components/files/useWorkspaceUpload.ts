@@ -19,15 +19,8 @@ import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import type { DroppedFile } from "./droppedFiles";
+import { createUploadProgressStore, type WorkspaceUploadProgress } from "./uploadProgressStore";
 import { joinWorkspacePath, parentWorkspacePath } from "./workspaceEntryName";
-
-export interface WorkspaceUploadProgress {
-  readonly fileCount: number;
-  readonly filesDone: number;
-  readonly bytesTotal: number;
-  readonly bytesDone: number;
-  readonly currentPath: string | null;
-}
 
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const UPLOAD_CONCURRENCY = 3;
@@ -218,7 +211,7 @@ export function useWorkspaceUpload(environmentId: EnvironmentId, cwd: string) {
   const createUploadUrl = useAtomCommand(projectEnvironment.createUploadUrl, {
     reportFailure: false,
   });
-  const [progress, setProgress] = useState<WorkspaceUploadProgress | null>(null);
+  const [progressStore] = useState(createUploadProgressStore);
   const abortsRef = useRef(new Set<() => void>());
   const cancelledRef = useRef(false);
 
@@ -234,14 +227,14 @@ export function useWorkspaceUpload(environmentId: EnvironmentId, cwd: string) {
     /** Called with the folders that gained or changed files, after the batch ends. */
     readonly onFoldersChanged: (folders: ReadonlySet<string>) => void;
   }) => {
-    if (progress) return Promise.resolve();
+    if (progressStore.isActive()) return Promise.resolve();
     cancelledRef.current = false;
     return runUploadBatch({
       ...input,
       environmentId,
       cwd,
       createUploadUrl,
-      setProgress,
+      setProgress: progressStore.set,
       addAbort: (abort) => {
         abortsRef.current.add(abort);
         return () => {
@@ -252,5 +245,5 @@ export function useWorkspaceUpload(environmentId: EnvironmentId, cwd: string) {
     });
   };
 
-  return { progress, start, cancel };
+  return { progressStore, start, cancel };
 }

@@ -15,6 +15,10 @@ import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
+type Dirent = Awaited<
+  ReturnType<NonNullable<Parameters<typeof WorkspaceFileSystem.containsGitEntry>[1]>>
+>[number];
+
 const UNKNOWN_WORKSPACE_PREFIX = "t3code-unknown-workspace-";
 const layerKnownWorkspacesTest = Layer.mock(KnownWorkspaces.KnownWorkspaces)({
   assertContains: (cwd) =>
@@ -383,5 +387,39 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystem entry mu
         expect(yield* fileSystem.readFileString(path.join(cwd, "real/a.md"))).toBe("a\n");
       }),
     );
+  });
+});
+
+describe("containsGitEntry", () => {
+  const directory = (name: string) => ({ name, isDirectory: () => true }) as Dirent;
+  const file = (name: string) => ({ name, isDirectory: () => false }) as Dirent;
+
+  it("finds a nested .git and stops reading once it is found", async () => {
+    const tree: Record<string, Dirent[]> = {
+      root: [directory("a"), directory("b")],
+      "root/a": [directory("deep")],
+      "root/b": [file("x.txt")],
+      "root/a/deep": [file(".git")],
+      "root/a/deep/never": [],
+    };
+    const read: string[] = [];
+    const found = await WorkspaceFileSystem.containsGitEntry("root", async (folder) => {
+      read.push(folder);
+      return tree[folder.replaceAll("\\", "/")] ?? [];
+    });
+    expect(found).toBe(true);
+    expect(read).toHaveLength(4);
+  });
+
+  it("reports a tree without a Git entry and fails when a folder cannot be read", async () => {
+    const clean = await WorkspaceFileSystem.containsGitEntry("root", async (folder) =>
+      folder === "root" ? [directory("a"), file("b")] : [file("c")],
+    );
+    expect(clean).toBe(false);
+    await expect(
+      WorkspaceFileSystem.containsGitEntry("root", async () => {
+        throw new Error("EACCES");
+      }),
+    ).rejects.toThrow("EACCES");
   });
 });
