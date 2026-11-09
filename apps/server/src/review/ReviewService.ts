@@ -1,12 +1,9 @@
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 
 import {
-  VcsRepositoryDetectionError,
   VcsUnsupportedOperationError,
   type ReviewBranchCommitsInput,
   type ReviewBranchCommitsResult,
@@ -17,10 +14,9 @@ import {
   type ReviewDiffPreviewResult,
 } from "@t3tools/contracts";
 
-import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
-import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
+import { makeWorkspaceBoundCwdGuard } from "../workspace/workspaceBoundCwd.ts";
 
 const WORKSPACE_BOUND_SUBJECTS = {
   "ReviewService.getBranchCommits": "commit list",
@@ -45,53 +41,12 @@ export class ReviewService extends Context.Service<
 
 /** @public */
 export const make = Effect.gen(function* () {
-  const config = yield* ServerConfig.ServerConfig;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
 
-  const canonicalizePath = (value: string) => {
-    const resolvedPath = path.resolve(value);
-    return fileSystem.realPath(resolvedPath).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          cause.reason._tag === "NotFound"
-            ? Effect.succeed(resolvedPath)
-            : Effect.fail(
-                new VcsRepositoryDetectionError({
-                  operation: "ReviewService.assertWorkspaceBoundCwd.canonicalizePath",
-                  cwd: resolvedPath,
-                  detail: "Failed to resolve a path while validating the review workspace.",
-                  cause,
-                }),
-              ),
-      }),
-    );
-  };
-
-  const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
-    operation: keyof typeof WORKSPACE_BOUND_SUBJECTS,
-    cwd: string,
-  ) {
-    const [candidate, workspaceRoot] = yield* Effect.all([
-      canonicalizePath(cwd),
-      canonicalizePath(config.cwd),
-    ]);
-    if (
-      KnownWorkspaces.isWithinRoot(path, candidate, workspaceRoot) ||
-      (yield* knownWorkspaces.contains(candidate))
-    ) {
-      return;
-    }
-
-    return yield* new VcsRepositoryDetectionError({
-      operation,
-      cwd,
-      detail: `Review ${WORKSPACE_BOUND_SUBJECTS[operation]} cwd must stay within the configured workspace root.`,
-    });
-  });
+  const assertWorkspaceBound = yield* makeWorkspaceBoundCwdGuard;
+  const assertWorkspaceBoundCwd = (operation: keyof typeof WORKSPACE_BOUND_SUBJECTS, cwd: string) =>
+    assertWorkspaceBound(operation, cwd, `Review ${WORKSPACE_BOUND_SUBJECTS[operation]}`);
 
   const getBranchCommits: ReviewService["Service"]["getBranchCommits"] = Effect.fn(
     "ReviewService.getBranchCommits",

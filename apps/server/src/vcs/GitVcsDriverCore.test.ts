@@ -2216,6 +2216,294 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
   });
 
+  describe("repository graph", () => {
+    it.effect("pages, filters and orders the commit graph with merge parents", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const rev = (ref: string) => git(cwd, ["rev-parse", ref]);
+        const root = yield* rev("HEAD");
+        yield* git(cwd, ["checkout", "-b", "feature"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "feature work"]);
+        const featureTip = yield* rev("HEAD");
+        yield* git(cwd, ["checkout", initialBranch]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "main work"]);
+        const mainTip = yield* rev("HEAD");
+        yield* git(cwd, ["merge", "--no-ff", "feature", "-m", "merge feature"]);
+        const merge = yield* rev("HEAD");
+        const shas = (result: { readonly commits: ReadonlyArray<{ readonly sha: string }> }) =>
+          result.commits.map((commit) => commit.sha);
+
+        const all = yield* driver.getGraph({ cwd });
+        assert.isTrue(all.isRepo);
+        assert.isNull(all.nextCursor);
+        assert.strictEqual(all.commits.length, 4);
+        assert.deepStrictEqual(all.commits[0]?.parents, [mainTip, featureTip]);
+        assert.deepStrictEqual(
+          [all.commits[0]?.subject, all.commits[0]?.authorName],
+          ["merge feature", "Test"],
+        );
+        // Topological order: every commit comes before its parents.
+        for (const commit of all.commits) {
+          for (const parent of commit.parents) {
+            assert.isBelow(shas(all).indexOf(commit.sha), shas(all).indexOf(parent));
+          }
+        }
+
+        const first = yield* driver.getGraph({ cwd, limit: 3 });
+        assert.strictEqual(first.nextCursor, 3);
+        const second = yield* driver.getGraph({ cwd, limit: 3, cursor: first.nextCursor! });
+        assert.isNull(second.nextCursor);
+        assert.deepStrictEqual([...shas(first), ...shas(second)], shas(all));
+
+        assert.deepStrictEqual(shas(yield* driver.getGraph({ cwd, ref: "feature" })), [
+          featureTip,
+          root,
+        ]);
+        assert.deepStrictEqual(
+          shas(yield* driver.getGraph({ cwd, ref: initialBranch, firstParent: true })),
+          [merge, mainTip, root],
+        );
+        assert.deepStrictEqual(shas(yield* driver.getGraph({ cwd, query: "FEATURE WORK" })), [
+          featureTip,
+        ]);
+        assert.isEmpty((yield* driver.getGraph({ cwd, query: "feature.work" })).commits);
+
+        const optionLike = yield* driver.getGraph({ cwd, ref: "--all" }).pipe(Effect.flip);
+        assert.include(optionLike.detail, "cannot start with '-'");
+        const missingRef = yield* driver.getGraph({ cwd, ref: "no-such-ref" }).pipe(Effect.flip);
+        assert.instanceOf(missingRef, GitCommandError);
+
+        // Remote branches: "upstreams" keeps only those a local branch tracks.
+        const tree = yield* rev("HEAD^{tree}");
+        const stray = yield* git(cwd, ["commit-tree", tree, "-p", root, "-m", "stray"]);
+        const tracked = yield* git(cwd, ["commit-tree", tree, "-p", root, "-m", "tracked"]);
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/stray", stray]);
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/tracked", tracked]);
+        yield* git(cwd, ["config", "remote.origin.url", "https://example.invalid/repo.git"]);
+        yield* git(cwd, ["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]);
+        yield* git(cwd, ["config", "branch.feature.remote", "origin"]);
+        yield* git(cwd, ["config", "branch.feature.merge", "refs/heads/tracked"]);
+        const upstreams = shas(yield* driver.getGraph({ cwd, remoteBranches: "upstreams" }));
+        assert.include(upstreams, tracked);
+        assert.notInclude(upstreams, stray);
+        const everything = shas(yield* driver.getGraph({ cwd, remoteBranches: "all" }));
+        assert.include(everything, stray);
+        assert.include(everything, tracked);
+        assert.deepStrictEqual(shas(yield* driver.getGraph({ cwd })), everything);
+
+        // A merge lists its changes against the first parent.
+        const details = yield* driver.getCommitDetails({ cwd, sha: merge });
+        assert.deepStrictEqual(
+          details.files.map((file) => file.path),
+          ["feature.txt"],
+        );
+      }),
+    );
+
+    it.effect("returns an empty graph for an empty repository and no repository", () =>
+      Effect.gen(function* () {
+        const empty = yield* makeTmpDir();
+        const plain = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd: empty });
+        assert.deepStrictEqual(yield* driver.getGraph({ cwd: empty }), {
+          isRepo: true,
+          commits: [],
+          nextCursor: null,
+        });
+        const refs = yield* driver.getRepositoryRefs({ cwd: empty });
+        assert.isTrue(refs.isRepo);
+        assert.isNull(refs.head.sha);
+        assert.deepStrictEqual(yield* driver.getGraph({ cwd: plain }), {
+          isRepo: false,
+          commits: [],
+          nextCursor: null,
+        });
+      }),
+    );
+
+    it.effect("lists branches with ahead and behind counts, peeled tags, and no remote HEAD", () =>
+      Effect.gen(function* () {
+        const upstream = yield* makeTmpDir();
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(upstream);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(upstream, ["branch", "topic"]);
+        yield* git(upstream, ["clone", upstream, cwd]);
+        yield* git(cwd, ["config", "user.email", "test@test.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+        yield* git(cwd, ["branch", "topic", "origin/topic"]);
+        yield* git(cwd, ["branch", "standalone"]);
+        yield* git(cwd, ["tag", "-a", "v1", "-m", "release"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "local only"]);
+        yield* git(upstream, ["commit", "--allow-empty", "-m", "upstream only"]);
+        yield* git(upstream, ["branch", "-D", "topic"]);
+        yield* git(cwd, ["fetch", "origin"]);
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const taggedCommit = yield* git(cwd, ["rev-parse", "v1^{commit}"]);
+        assert.notStrictEqual(yield* git(cwd, ["rev-parse", "v1"]), taggedCommit);
+
+        const refs = yield* driver.getRepositoryRefs({ cwd });
+        const byName = new Map(
+          refs.branches.map((branch) => [`${branch.kind}:${branch.name}`, branch]),
+        );
+        assert.deepStrictEqual(refs.head, { sha: head, branch: initialBranch });
+        assert.deepInclude(byName.get(`local:${initialBranch}`), {
+          upstream: `origin/${initialBranch}`,
+          ahead: 1,
+          behind: 1,
+        });
+        // The remote branch is gone only after a prune, so topic still tracks origin/topic here.
+        assert.deepInclude(byName.get("local:topic"), { upstream: "origin/topic", ahead: 0 });
+        assert.deepInclude(byName.get("local:standalone"), {
+          upstream: null,
+          ahead: null,
+          behind: null,
+        });
+        assert.isTrue(byName.has(`remote:origin/${initialBranch}`));
+        assert.isFalse(byName.has("remote:origin/HEAD"));
+        assert.deepStrictEqual(refs.tags, [{ name: "v1", sha: taggedCommit }]);
+
+        yield* git(cwd, ["update-ref", "refs/remotes/origin/stray", head]);
+        const trackedOnly = yield* driver.getRepositoryRefs({
+          cwd,
+          remoteBranches: "upstreams",
+        });
+        const remoteNames = (result: typeof refs) =>
+          result.branches.filter((branch) => branch.kind === "remote").map((branch) => branch.name);
+        assert.deepStrictEqual(remoteNames(trackedOnly).toSorted(), [
+          `origin/${initialBranch}`,
+          "origin/topic",
+        ]);
+        assert.deepStrictEqual(trackedOnly.head, refs.head);
+        assert.deepStrictEqual(trackedOnly.tags, refs.tags);
+        assert.include(remoteNames(yield* driver.getRepositoryRefs({ cwd })), "origin/stray");
+        yield* git(cwd, ["update-ref", "-d", "refs/remotes/origin/stray"]);
+
+        yield* git(cwd, ["fetch", "origin", "--prune"]);
+        const pruned = yield* driver.getRepositoryRefs({ cwd });
+        assert.deepInclude(
+          pruned.branches.find((branch) => branch.name === "topic" && branch.kind === "local"),
+          { upstream: "origin/topic", ahead: null, behind: null },
+        );
+      }),
+    );
+
+    it.effect("lists worktrees with changed file counts and the current one", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const holder = yield* makeTmpDir();
+        const fileSystem = yield* FileSystem.FileSystem;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const linked = NodePath.join(holder, "linked");
+        const detached = NodePath.join(holder, "detached");
+        yield* git(cwd, ["worktree", "add", "-b", "linked-branch", linked]);
+        yield* git(cwd, ["worktree", "add", "--detach", detached]);
+        yield* git(linked, ["mv", "README.md", "RENAMED.md"]);
+        yield* writeTextFile(linked, "untracked.txt", "new\n");
+        yield* fileSystem.remove(detached, { recursive: true });
+
+        const fromMain = yield* driver.getRepositoryRefs({ cwd });
+        const main = fromMain.worktrees[0];
+        const link = fromMain.worktrees.find((worktree) => worktree.branch === "linked-branch");
+        const gone = fromMain.worktrees.find((worktree) => worktree.path.endsWith("detached"));
+        assert.strictEqual(fromMain.worktrees.length, 3);
+        assert.deepInclude(main, {
+          branch: initialBranch,
+          isMain: true,
+          isCurrent: true,
+          changedFiles: 0,
+        });
+        assert.deepInclude(link, {
+          branch: "linked-branch",
+          isMain: false,
+          isCurrent: false,
+          changedFiles: 2,
+        });
+        assert.deepInclude(gone, { branch: null, changedFiles: null });
+        assert.strictEqual(link?.sha, yield* git(cwd, ["rev-parse", "HEAD"]));
+
+        const fromLinked = yield* driver.getRepositoryRefs({ cwd: linked });
+        assert.deepStrictEqual(
+          fromLinked.worktrees
+            .filter((worktree) => worktree.isCurrent)
+            .map((worktree) => worktree.branch),
+          ["linked-branch"],
+        );
+      }),
+    );
+
+    it.effect("reads commit details against the first parent, with renames and binary files", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* initRepoWithCommit(cwd);
+        const root = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["mv", "README.md", "docs.md"]);
+        yield* writeTextFile(cwd, "notes.txt", "one\ntwo\n");
+        yield* writeTextFile(cwd, "blob.bin", "\0\0\0binary");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, [
+          "commit",
+          "-m",
+          "second change",
+          "-m",
+          "Body line one.\n\nBody line two.",
+        ]);
+        const sha = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const details = yield* driver.getCommitDetails({ cwd, sha: sha.slice(0, 8) });
+        assert.deepInclude(details, {
+          sha,
+          subject: "second change",
+          body: "Body line one.\n\nBody line two.",
+          authorName: "Test",
+          filesTruncated: false,
+        });
+        assert.deepStrictEqual(details.parents, [root]);
+        const files = new Map(details.files.map((file) => [file.path, file]));
+        assert.deepStrictEqual(files.get("docs.md"), {
+          path: "docs.md",
+          previousPath: "README.md",
+          additions: 0,
+          deletions: 0,
+        });
+        assert.deepStrictEqual(files.get("notes.txt"), {
+          path: "notes.txt",
+          previousPath: null,
+          additions: 2,
+          deletions: 0,
+        });
+        assert.deepInclude(files.get("blob.bin"), { additions: null, deletions: null });
+
+        const rootDetails = yield* driver.getCommitDetails({ cwd, sha: root });
+        assert.isEmpty(rootDetails.parents);
+        assert.deepStrictEqual(
+          rootDetails.files.map((file) => [file.path, file.additions]),
+          [["README.md", 1]],
+        );
+      }),
+    );
+
+    it.effect.each(["zzzz", "abc", "--all", "deadbeef", "HEAD"])(
+      "rejects the commit sha %s with a typed error",
+      (sha) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* initRepoWithCommit(cwd);
+          const error = yield* driver.getCommitDetails({ cwd, sha }).pipe(Effect.flip);
+          assert.instanceOf(error, GitCommandError);
+          assert.strictEqual(error.detail, "Commit not found.");
+        }),
+    );
+  });
+
   describe("review diff previews", () => {
     it.effect("diffs a root commit against the empty tree but rejects a shallow boundary", () =>
       Effect.gen(function* () {

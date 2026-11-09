@@ -132,6 +132,7 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as VcsGraphService from "./vcs/VcsGraphService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -461,12 +462,19 @@ const layerReview = ReviewService.layer.pipe(
   Layer.provideMerge(layerVcsDriverRegistry),
 );
 
+const layerVcsGraph = VcsGraphService.layer.pipe(
+  Layer.provideMerge(layerKnownWorkspaces),
+  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(layerVcsDriverRegistry),
+);
+
 const layerVcs = Layer.empty.pipe(
   Layer.provideMerge(VcsProjectConfig.layer),
   Layer.provideMerge(layerVcsDriverRegistry),
   Layer.provideMerge(VcsProvisioningService.layer.pipe(Layer.provide(layerVcsDriverRegistry))),
   Layer.provideMerge(layerGitWorkflow),
   Layer.provideMerge(layerReview),
+  Layer.provideMerge(layerVcsGraph),
   Layer.provideMerge(layerSourceControlRepositoryService),
   Layer.provideMerge(
     SourceControlSignIn.layer.pipe(Layer.provide(layerSourceControlProviderRegistry)),

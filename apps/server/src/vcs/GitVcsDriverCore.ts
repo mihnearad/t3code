@@ -30,7 +30,15 @@ import {
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
+  VCS_GRAPH_MAX_LIMIT,
+  type VcsCommitDetailsInput,
+  type VcsCommitFileStat,
+  type VcsGraphCommit,
+  type VcsGraphInput,
   type VcsRef,
+  type VcsRepositoryBranch,
+  type VcsRepositoryRefsInput,
+  type VcsRepositoryTag,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -80,6 +88,14 @@ const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
 const REVIEW_BRANCH_COMMIT_MAX_OUTPUT_BYTES = 128 * 1024;
+const GRAPH_DEFAULT_LIMIT = 500;
+const GRAPH_SUBJECT_LIMIT = 300;
+const GRAPH_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+const GRAPH_TIMEOUT_MS = 30_000;
+const GRAPH_WORKTREE_STATUS_CONCURRENCY = 4;
+const COMMIT_BODY_MAX_OUTPUT_BYTES = 64 * 1024;
+const COMMIT_DETAILS_MAX_FILES = 500;
+const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 // Client patch parsers require a/ and b/ prefixes; override user diff prefix settings.
 export const PATCH_RENDER_PREFIX_ARGS = ["--src-prefix=a/", "--dst-prefix=b/"] as const;
 // Client patch parsers drop blank context lines under diff.suppressBlankEmpty and summaries under diff.submodule.
@@ -3412,6 +3428,451 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const graphCommandError = (operation: string, cwd: string, detail: string) =>
+    new GitCommandError({ operation, command: "git", cwd, detail });
+
+  const resolveGraphRepository = (cwd: string) =>
+    resolveRepositoryPaths(cwd).pipe(
+      Effect.catchTags({
+        GitCommandError: (error) =>
+          isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
+
+  const getGraph = Effect.fn("getGraph")(function* (input: VcsGraphInput) {
+    const empty = { isRepo: false, commits: [], nextCursor: null } as const;
+    const repository = yield* resolveGraphRepository(input.cwd);
+    if (!repository) return empty;
+    const cwd = repository.worktreeRoot ?? input.cwd;
+    yield* refuseOptionLikeRefName("GitVcsDriver.getGraph", cwd, input.ref);
+
+    const limit = Math.min(input.limit ?? GRAPH_DEFAULT_LIMIT, VCS_GRAPH_MAX_LIMIT);
+    const cursor = input.cursor ?? 0;
+    let revisions: ReadonlyArray<string>;
+    if (input.ref !== undefined) {
+      revisions = ["--end-of-options", input.ref, "--"];
+    } else if (input.remoteBranches === "upstreams") {
+      const upstreamResult = yield* executeGit(
+        "GitVcsDriver.getGraph.upstreams",
+        cwd,
+        ["for-each-ref", "--format=%(upstream)%09%(upstream:track)", "refs/heads"],
+        { allowNonZeroExit: true },
+      );
+      const upstreams = new Set<string>();
+      if (upstreamResult.exitCode === 0) {
+        for (const line of upstreamResult.stdout.split("\n")) {
+          const [name = "", track = ""] = line.split("\t");
+          if (name !== "" && !track.includes("gone")) upstreams.add(name);
+        }
+      }
+      revisions = [
+        "--branches",
+        "--tags",
+        "HEAD",
+        ...(upstreams.size > 0 ? ["--end-of-options", ...upstreams] : []),
+        "--",
+      ];
+    } else {
+      revisions = ["--branches", "--remotes", "--tags", "HEAD", "--"];
+    }
+    const runLog = (revs: ReadonlyArray<string>) =>
+      executeGit(
+        "GitVcsDriver.getGraph",
+        cwd,
+        [
+          "log",
+          "-z",
+          "--topo-order",
+          "--no-notes",
+          "--no-show-signature",
+          "--format=%H%x00%P%x00%an%x00%aI%x00%s",
+          ...(input.firstParent ? ["--first-parent"] : []),
+          ...(input.query !== undefined
+            ? [`--grep=${input.query}`, "--fixed-strings", "--regexp-ignore-case"]
+            : []),
+          `--skip=${cursor}`,
+          `--max-count=${limit + 1}`,
+          ...revs,
+        ],
+        {
+          allowNonZeroExit: true,
+          maxOutputBytes: GRAPH_MAX_OUTPUT_BYTES,
+          appendTruncationMarker: true,
+          timeoutMs: GRAPH_TIMEOUT_MS,
+        },
+      );
+    let result = yield* runLog(revisions);
+    // An unborn HEAD makes the default revision list fail; retry without it only then.
+    if (result.exitCode !== 0 && input.ref === undefined && revisions.includes("HEAD")) {
+      result = yield* runLog(revisions.filter((revision) => revision !== "HEAD"));
+    }
+    if (result.exitCode !== 0) {
+      // An empty repository has nothing to show; any other failure is a bad ref or a git error.
+      if (input.ref !== undefined) {
+        const head = yield* executeGit(
+          "GitVcsDriver.getGraph.head",
+          cwd,
+          ["rev-parse", "--verify", "--quiet", "HEAD"],
+          { allowNonZeroExit: true },
+        );
+        if (head.exitCode !== 0) return { ...empty, isRepo: true };
+      }
+      return yield* graphCommandError(
+        "GitVcsDriver.getGraph",
+        cwd,
+        "Could not read the commit graph. The ref may not exist.",
+      );
+    }
+    const fields = result.stdout.split("\0");
+    // The last field is empty after the final record, or a partial record when output was cut.
+    const completeFieldCount = fields.length - 1;
+    const commits: Array<VcsGraphCommit> = [];
+    for (let index = 0; index + 5 <= completeFieldCount && commits.length <= limit; index += 5) {
+      const sha = fields[index];
+      const parents = fields[index + 1];
+      const authorName = fields[index + 2];
+      const authoredAt = fields[index + 3];
+      const subject = fields[index + 4];
+      if (
+        !sha ||
+        parents === undefined ||
+        authorName === undefined ||
+        !authoredAt ||
+        subject === undefined ||
+        !GIT_OBJECT_ID_PATTERN.test(sha)
+      ) {
+        return yield* graphCommandError(
+          "GitVcsDriver.getGraph",
+          cwd,
+          "Could not read commit graph metadata.",
+        );
+      }
+      commits.push({
+        sha,
+        parents: parents.length === 0 ? [] : parents.split(" "),
+        subject: subject.slice(0, GRAPH_SUBJECT_LIMIT),
+        authorName,
+        authoredAt,
+      });
+    }
+    if (result.stdoutTruncated && commits.length === 0) {
+      return yield* graphCommandError(
+        "GitVcsDriver.getGraph",
+        cwd,
+        "Commit graph metadata exceeds the response limit.",
+      );
+    }
+    const page = commits.slice(0, limit);
+    const hasMore = commits.length > limit || result.stdoutTruncated;
+    return { isRepo: true, commits: page, nextCursor: hasMore ? cursor + page.length : null };
+  });
+
+  const parseGraphWorktreeRecords = (stdout: string) => {
+    const records: Array<{
+      path: string;
+      branch: string | null;
+      sha: string | null;
+      bare: boolean;
+      prunable: boolean;
+    }> = [];
+    let current: (typeof records)[number] | null = null;
+    for (const field of stdout.split("\0")) {
+      if (field === "") {
+        current = null;
+      } else if (field.startsWith("worktree ")) {
+        current = {
+          path: field.slice("worktree ".length),
+          branch: null,
+          sha: null,
+          bare: false,
+          prunable: false,
+        };
+        records.push(current);
+      } else if (current) {
+        if (field.startsWith("HEAD ")) {
+          const sha = field.slice("HEAD ".length);
+          current.sha = /^0+$/.test(sha) ? null : sha;
+        } else if (field.startsWith("branch refs/heads/")) {
+          current.branch = field.slice("branch refs/heads/".length);
+        } else if (field === "bare") {
+          current.bare = true;
+        } else if (field === "prunable" || field.startsWith("prunable ")) {
+          current.prunable = true;
+        }
+      }
+    }
+    return records;
+  };
+
+  const countPorcelainEntries = (stdout: string) => {
+    const fields = stdout.split("\0");
+    let count = 0;
+    for (let index = 0; index < fields.length; index += 1) {
+      const entry = fields[index];
+      if (!entry) continue;
+      count += 1;
+      // Renames and copies carry the original path as the next field.
+      if (/^[RC]|^.[RC]/.test(entry)) index += 1;
+    }
+    return count;
+  };
+
+  const getRepositoryRefs = Effect.fn("getRepositoryRefs")(function* (
+    input: VcsRepositoryRefsInput,
+  ) {
+    const notRepo = {
+      isRepo: false,
+      head: { sha: null, branch: null },
+      branches: [],
+      tags: [],
+      worktrees: [],
+    } as const;
+    const repository = yield* resolveGraphRepository(input.cwd);
+    if (!repository) return notRepo;
+    const cwd = repository.worktreeRoot ?? input.cwd;
+
+    const refFormat =
+      "--format=%(refname)%00%(objectname)%00%(*objectname)%00%(symref)%00%(upstream:short)%00%(upstream:track,nobracket)%00%(upstream)%00%(HEAD)";
+    const forEachRef = (patterns: ReadonlyArray<string>) =>
+      executeGit(
+        "GitVcsDriver.getRepositoryRefs.forEachRef",
+        cwd,
+        ["for-each-ref", refFormat, ...patterns],
+        { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, timeoutMs: GRAPH_TIMEOUT_MS },
+      );
+    const upstreamsOnly = input.remoteBranches === "upstreams";
+    const [refsResult, worktreeResult] = yield* Effect.all(
+      [
+        forEachRef(
+          upstreamsOnly ? ["refs/heads", "refs/tags"] : ["refs/heads", "refs/remotes", "refs/tags"],
+        ),
+        executeWorktreeList("GitVcsDriver.getRepositoryRefs.worktreeList", cwd, [], {
+          timeoutMs: 30_000,
+          allowNonZeroExit: true,
+          maxOutputBytes: 16 * 1024 * 1024,
+        }),
+      ],
+      { concurrency: 2 },
+    );
+    let refLines = refsResult.stdout.split("\n");
+    if (upstreamsOnly) {
+      const upstreamRefs = new Set<string>();
+      for (const line of refLines) {
+        const upstreamRef = line.split("\0")[6];
+        if (upstreamRef?.startsWith("refs/remotes/")) upstreamRefs.add(upstreamRef);
+      }
+      if (upstreamRefs.size > 0) {
+        const remoteResult = yield* forEachRef([...upstreamRefs]);
+        refLines = refLines.concat(remoteResult.stdout.split("\n"));
+      }
+    }
+
+    const branches: Array<VcsRepositoryBranch> = [];
+    const tags: Array<VcsRepositoryTag> = [];
+    let headBranch: { name: string; sha: string } | null = null;
+    for (const line of refLines) {
+      const [refName, objectName, peeledName, symref, upstream, track, , headMarker] =
+        line.split("\0");
+      if (!refName || !objectName || symref) continue;
+      if (refName.startsWith("refs/tags/")) {
+        tags.push({ name: refName.slice("refs/tags/".length), sha: peeledName || objectName });
+        continue;
+      }
+      const isLocal = refName.startsWith("refs/heads/");
+      if (!isLocal && !refName.startsWith("refs/remotes/")) continue;
+      const hasUpstream = upstream !== undefined && upstream.length > 0;
+      const hasCounts = hasUpstream && track !== "gone";
+      const name = refName.slice(isLocal ? "refs/heads/".length : "refs/remotes/".length);
+      if (isLocal && headMarker === "*") headBranch = { name, sha: objectName };
+      branches.push({
+        name,
+        kind: isLocal ? "local" : "remote",
+        sha: objectName,
+        upstream: hasUpstream ? upstream : null,
+        ahead: hasCounts ? Number(/ahead (\d+)/.exec(track ?? "")?.[1] ?? 0) : null,
+        behind: hasCounts ? Number(/behind (\d+)/.exec(track ?? "")?.[1] ?? 0) : null,
+      });
+    }
+
+    // Only a detached or unborn HEAD lacks a `%(HEAD)` marker and needs its own lookups.
+    const head = headBranch
+      ? { sha: headBranch.sha, branch: headBranch.name }
+      : yield* Effect.all(
+          [
+            executeGit(
+              "GitVcsDriver.getRepositoryRefs.head",
+              cwd,
+              ["rev-parse", "--verify", "--quiet", "HEAD"],
+              { allowNonZeroExit: true },
+            ),
+            executeGit(
+              "GitVcsDriver.getRepositoryRefs.headBranch",
+              cwd,
+              ["symbolic-ref", "--quiet", "HEAD"],
+              { allowNonZeroExit: true, timeoutMs: 5_000 },
+            ),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.map(([sha, branch]) => ({
+            sha: sha.exitCode === 0 ? sha.stdout.trim() : null,
+            branch: branch.exitCode === 0 ? branchNameFromHeadRef(branch.stdout) : null,
+          })),
+        );
+
+    const canonical = (value: string) =>
+      fileSystem
+        .realPath(path.resolve(value))
+        .pipe(Effect.orElseSucceed(() => path.resolve(value)));
+    const currentRoot = yield* canonical(cwd);
+    const records =
+      worktreeResult.exitCode === 0 ? parseGraphWorktreeRecords(worktreeResult.stdout) : [];
+    const worktrees = yield* Effect.forEach(
+      records,
+      (record, index) =>
+        Effect.gen(function* () {
+          const worktreePath = path.resolve(cwd, record.path);
+          const isCurrent = (yield* canonical(worktreePath)) === currentRoot;
+          const changedFiles =
+            record.prunable || record.bare
+              ? null
+              : yield* executeGit(
+                  "GitVcsDriver.getRepositoryRefs.worktreeStatus",
+                  worktreePath,
+                  ["status", "--porcelain=v1", "-z"],
+                  {
+                    env: { GIT_OPTIONAL_LOCKS: "0" },
+                    maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
+                    timeoutMs: GRAPH_TIMEOUT_MS,
+                    allowNonZeroExit: true,
+                  },
+                ).pipe(
+                  Effect.map((status) =>
+                    status.exitCode === 0 ? countPorcelainEntries(status.stdout) : null,
+                  ),
+                  Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
+                );
+          return {
+            path: worktreePath,
+            branch: record.branch,
+            sha: record.sha,
+            isMain: index === 0,
+            isCurrent,
+            changedFiles,
+          };
+        }),
+      { concurrency: GRAPH_WORKTREE_STATUS_CONCURRENCY },
+    );
+
+    return {
+      isRepo: true,
+      head,
+      branches,
+      tags,
+      worktrees,
+    };
+  });
+
+  const getCommitDetails = Effect.fn("getCommitDetails")(function* (input: VcsCommitDetailsInput) {
+    const repository = yield* resolveGraphRepository(input.cwd);
+    const cwd = repository?.worktreeRoot ?? input.cwd;
+    const notFound = () =>
+      graphCommandError("GitVcsDriver.getCommitDetails", cwd, "Commit not found.");
+    if (!repository || !/^[0-9a-f]{4,64}$/i.test(input.sha)) return yield* notFound();
+
+    const resolved = yield* executeGit(
+      "GitVcsDriver.getCommitDetails.resolve",
+      cwd,
+      ["rev-parse", "--verify", "--quiet", "--end-of-options", `${input.sha}^{commit}`],
+      { allowNonZeroExit: true, env: { GIT_NO_LAZY_FETCH: "1" } },
+    );
+    const sha = resolved.stdout.trim();
+    if (resolved.exitCode !== 0 || !GIT_OBJECT_ID_PATTERN.test(sha)) return yield* notFound();
+
+    const message = yield* executeGit(
+      "GitVcsDriver.getCommitDetails.message",
+      cwd,
+      [
+        "log",
+        "-1",
+        "--no-notes",
+        "--no-show-signature",
+        "--format=%P%x00%an%x00%aI%x00%s%x00%b",
+        "--end-of-options",
+        sha,
+        "--",
+      ],
+      { maxOutputBytes: COMMIT_BODY_MAX_OUTPUT_BYTES, appendTruncationMarker: true },
+    );
+    const [parentField, authorName, authoredAt, subject, ...bodyParts] = message.stdout.split("\0");
+    if (
+      parentField === undefined ||
+      authorName === undefined ||
+      !authoredAt ||
+      subject === undefined
+    ) {
+      return yield* graphCommandError(
+        "GitVcsDriver.getCommitDetails",
+        cwd,
+        "Could not read commit metadata.",
+      );
+    }
+    const parents = parentField.length === 0 ? [] : parentField.split(" ");
+
+    // First parent only, like the Diff panel's Commits source; a root commit diffs against nothing.
+    const stat = yield* executeGit(
+      "GitVcsDriver.getCommitDetails.files",
+      cwd,
+      [
+        "diff-tree",
+        "-r",
+        "-M",
+        "--numstat",
+        "-z",
+        ...(parents[0] === undefined ? ["--root", sha] : [parents[0], sha]),
+      ],
+      { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, timeoutMs: GRAPH_TIMEOUT_MS },
+    );
+    const tokens = stat.stdout.split("\0");
+    // A cut-off output ends in a partial token.
+    if (stat.stdoutTruncated) tokens.pop();
+    const files: Array<VcsCommitFileStat> = [];
+    let filesTruncated = stat.stdoutTruncated;
+    for (let index = 0; index < tokens.length;) {
+      const match = /^(-|\d+)\t(-|\d+)\t([\s\S]*)$/.exec(tokens[index] ?? "");
+      if (!match) {
+        index += 1;
+        continue;
+      }
+      const isRename = match[3] === "";
+      const previousPath = isRename ? tokens[index + 1] : undefined;
+      const filePath = isRename ? tokens[index + 2] : match[3];
+      index += isRename ? 3 : 1;
+      if (filePath === undefined || (isRename && previousPath === undefined)) break;
+      if (files.length >= COMMIT_DETAILS_MAX_FILES) {
+        filesTruncated = true;
+        break;
+      }
+      files.push({
+        path: filePath,
+        previousPath: previousPath ?? null,
+        additions: match[1] === "-" ? null : Number(match[1]),
+        deletions: match[2] === "-" ? null : Number(match[2]),
+      });
+    }
+
+    return {
+      sha,
+      parents,
+      subject,
+      body: bodyParts.join("\0").trim(),
+      authorName,
+      authoredAt,
+      files,
+      filesTruncated,
+    };
+  });
+
   const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
     input: ReviewDiffPreviewInput,
   ) {
@@ -5112,6 +5573,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     readRangeContext,
     getReviewBranchCommits,
+    getGraph,
+    getRepositoryRefs,
+    getCommitDetails,
     getReviewDiffPreview,
     getReviewDiffFileContents,
     readConfigValue,

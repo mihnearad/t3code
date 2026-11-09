@@ -1,6 +1,6 @@
 # Git graph surface
 
-- Status: Planned
+- Status: Shipped on `rad` (09/11/2026). Mobile follows later.
 - Started: 09/11/2026
 - Design: Claude Design canvas "T3 Code Git Graph" (private, ask the owner
   for access)
@@ -60,8 +60,10 @@ Use the existing web components and tokens only. No new look.
 | Long paths and branches  | `MiddleTruncate`, `Tooltip` for the full subject                                                                                    |
 | Lists                    | `ScrollArea` with a virtualized list                                                                                                |
 
-Lane colours come from the Tailwind 400 palette that the theme already uses
-(blue, emerald, amber, violet, pink), so they work in light and dark themes.
+Lane colours are theme tokens (`--info-foreground`, `--success-foreground`,
+`--warning-foreground`, `--guest-foreground`, `--error-foreground`,
+`--primary`), so the graph follows light, dark and custom themes. The surface
+uses no hex or palette colours.
 
 ## Scope (version 1)
 
@@ -86,18 +88,24 @@ Lane colours come from the Tailwind 400 palette that the theme already uses
 
 ## Server and contracts
 
-- `packages/contracts`: a new `vcs.getGraph` RPC. Input: environment, project
-  or thread cwd, ref filter, cursor, page size. Output: commits (hash, parents,
-  author, date, subject, ref names) and a cursor. A second RPC
-  `vcs.getRepositoryRefs` returns branches, remote branches, tags, and
-  worktrees with path, branch, dirty state and ahead/behind.
-- `apps/server/src/vcs`: one service method per RPC in the git driver. It runs
-  `git log --topo-order --format=... -z` and `git worktree list --porcelain -z`
-  (the driver already reads worktrees). Map each worktree path to the thread
-  that uses it from the projection, not from git.
+- `packages/contracts/src/git.ts` has three read RPCs:
+  - `vcs.getGraph`: commits (sha, parents, author, date, subject) in
+    topological order, by page, with optional ref, first-parent and message
+    search.
+  - `vcs.getRepositoryRefs`: branches with ahead/behind, tags, HEAD, and
+    worktrees with path, branch, sha and the count of uncommitted files.
+  - `vcs.getCommitDetails`: message body and changed files against the first
+    parent, loaded only for the selected commit.
+- `apps/server/src/vcs/VcsGraphService.ts` checks that the cwd is in the
+  workspace, like `ReviewService`, and calls the git driver.
+- Refs are a separate request, and the client puts them on the commits by sha.
+  The client also maps each worktree path to its thread from the thread state it
+  already has, so the server needs no access to the projection.
 - The server sends raw commits and parents only. The client computes the lane
   layout. This keeps the payload small and the server simple.
-- Add the new read methods to `CLIENT_GUARDED_RPC_SCOPES` with a read scope.
+- The reads use the same auth scope as the Diff panel's commit list
+  (`AuthFilesystemReadScope`). `CLIENT_GUARDED_RPC_SCOPES` is for client
+  mutations only, so it does not change.
 - No MCP tool in version 1. Agents already run git.
 
 ## Client
@@ -128,6 +136,14 @@ Lane colours come from the Tailwind 400 palette that the theme already uses
   changes small and in new files, so merges stay easy.
 - Lane layout bugs on unusual histories. Mitigation: tests with real histories
   copied from our repositories.
+
+## Follow-ups
+
+- Every refs refresh runs `git status` in every worktree. With many worktrees,
+  refresh the other worktrees only when the surface opens or on request, and
+  the current one on each status event.
+- Remote branches load in full only with "All remote branches". A very large
+  set of remote branches could load by page instead.
 
 ## Rollback
 
