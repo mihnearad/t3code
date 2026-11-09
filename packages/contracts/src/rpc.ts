@@ -135,6 +135,12 @@ import {
   VcsInitInput,
   VcsListRefsInput,
   VcsListRefsResult,
+  VcsGraphInput,
+  VcsGraphResult,
+  VcsRepositoryRefsInput,
+  VcsRepositoryRefsResult,
+  VcsCommitDetailsInput,
+  VcsCommitDetailsResult,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
@@ -472,6 +478,9 @@ export const WS_METHODS = {
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
+  vcsGetGraph: "vcs.getGraph",
+  vcsGetRepositoryRefs: "vcs.getRepositoryRefs",
+  vcsGetCommitDetails: "vcs.getCommitDetails",
 
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
@@ -1579,6 +1588,26 @@ const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   error: Schema.Union([VcsError, EnvironmentAuthorizationError]),
 });
 
+const VcsGraphReadError = Schema.Union([VcsError, GitCommandError, EnvironmentAuthorizationError]);
+
+const WsVcsGetGraphRpc = Rpc.make(WS_METHODS.vcsGetGraph, {
+  payload: VcsGraphInput,
+  success: VcsGraphResult,
+  error: VcsGraphReadError,
+});
+
+const WsVcsGetRepositoryRefsRpc = Rpc.make(WS_METHODS.vcsGetRepositoryRefs, {
+  payload: VcsRepositoryRefsInput,
+  success: VcsRepositoryRefsResult,
+  error: VcsGraphReadError,
+});
+
+const WsVcsGetCommitDetailsRpc = Rpc.make(WS_METHODS.vcsGetCommitDetails, {
+  payload: VcsCommitDetailsInput,
+  success: VcsCommitDetailsResult,
+  error: VcsGraphReadError,
+});
+
 const WsReviewGetBranchCommitsRpc = Rpc.make(WS_METHODS.reviewGetBranchCommits, {
   payload: ReviewBranchCommitsInput,
   success: ReviewBranchCommitsResult,
@@ -2202,6 +2231,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
+  WsVcsGetGraphRpc,
+  WsVcsGetRepositoryRefsRpc,
+  WsVcsGetCommitDetailsRpc,
   WsReviewGetBranchCommitsRpc,
   WsReviewGetDiffPreviewRpc,
   WsReviewGetDiffFileContentsRpc,

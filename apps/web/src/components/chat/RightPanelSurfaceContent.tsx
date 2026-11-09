@@ -29,6 +29,7 @@ const PreviewPanel = lazy(() =>
   import("../preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("../DiffPanel"));
+const GitGraphPanel = lazy(() => import("../gitGraph/GitGraphPanel"));
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
@@ -114,6 +115,17 @@ export function RightPanelSurfaceContent(props: {
             composerDraftTarget={props.composerDraftTarget}
             workspaceMutationId={props.workspaceMutationId}
             visible={visible}
+          />
+        </Suspense>
+      );
+    case "git-graph":
+      return (
+        <Suspense fallback={null}>
+          <GitGraphPanel
+            key={scopedThreadKey(threadRef)}
+            threadRef={threadRef}
+            visible={visible}
+            workspaceMutationId={props.workspaceMutationId}
           />
         </Suspense>
       );

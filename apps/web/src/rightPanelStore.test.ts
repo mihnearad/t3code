@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -76,6 +76,22 @@ describe("rightPanelStore", () => {
         .getState()
         .entries.map((entry) => (entry.kind === "panel-tab" ? entry.surface.id : null)),
     ).toEqual(["device", "diff", pr.id]);
+  });
+
+  it("keeps one Git graph surface and saves it for reopening", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "git-graph");
+    store.open(refA, "git-graph");
+    expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(refA)]?.surfaces).toEqual([
+      { id: "git-graph", kind: "git-graph" },
+    ]);
+
+    store.closeSurface(refA, "git-graph");
+    expect(
+      useClosedViewStore
+        .getState()
+        .entries.map((entry) => entry.kind === "panel-tab" && entry.surface.id),
+    ).toEqual(["git-graph"]);
   });
 
   it("reopens the active tab first after a bulk close", () => {

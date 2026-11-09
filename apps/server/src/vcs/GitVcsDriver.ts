@@ -26,6 +26,12 @@ import {
   type ReviewDiffPreviewResult,
   type ReviewDiffFileContentsInput,
   type ReviewDiffFileContentsResult,
+  type VcsCommitDetailsInput,
+  type VcsCommitDetailsResult,
+  type VcsGraphInput,
+  type VcsGraphResult,
+  type VcsRepositoryRefsInput,
+  type VcsRepositoryRefsResult,
   type VcsInitInput,
   type VcsListRefsInput,
   type VcsListRefsResult,
@@ -343,6 +349,13 @@ export class GitVcsDriver extends Context.Service<
     readonly getReviewBranchCommits: (
       input: ReviewBranchCommitsInput,
     ) => Effect.Effect<ReviewBranchCommitsResult, GitCommandError>;
+    readonly getGraph: (input: VcsGraphInput) => Effect.Effect<VcsGraphResult, GitCommandError>;
+    readonly getRepositoryRefs: (
+      input: VcsRepositoryRefsInput,
+    ) => Effect.Effect<VcsRepositoryRefsResult, GitCommandError>;
+    readonly getCommitDetails: (
+      input: VcsCommitDetailsInput,
+    ) => Effect.Effect<VcsCommitDetailsResult, GitCommandError>;
     readonly getReviewDiffPreview: (
       input: ReviewDiffPreviewInput,
     ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;

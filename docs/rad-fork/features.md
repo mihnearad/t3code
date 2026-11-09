@@ -25,4 +25,5 @@ Add a row when you start a plan, and update it when the feature lands on `rad`.
 | 07/11/2026 | Files sidebar: upload by drop           | Shipped | -                                    | `8eb0aa0187`, `fd44bf9887` | Not sent  |
 | 07/11/2026 | Files sidebar: delete files and folders | Shipped | -                                    | `e53753a8e3`, `9cfbe90a6d` | Not sent  |
 | 07/11/2026 | Private update feed and deploy steps    | Shipped | -                                    | `4b14a8e161`               | Fork only |
-| 09/11/2026 | Git graph surface                       | Planned | [git-graph.md](./plans/git-graph.md) | -                          | Not sent  |
+| 09/11/2026 | Git graph surface                       | Shipped | [git-graph.md](./plans/git-graph.md) | `feature/git-graph` merge  | Not sent  |
+| 09/11/2026 | Files sidebar: performance fixes        | Shipped | -                                    | `5e7658e4a7`               | Not sent  |

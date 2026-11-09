@@ -263,6 +263,10 @@
       "types": "./src/state/relayDiscovery.ts",
       "default": "./src/state/relayDiscovery.ts"
     },
+    "./state/git-graph": {
+      "types": "./src/state/gitGraph.ts",
+      "default": "./src/state/gitGraph.ts"
+    },
     "./state/review": {
       "types": "./src/state/review.ts",
       "default": "./src/state/review.ts"
@@ -478,6 +482,14 @@
     "./diff-count": {
       "types": "./src/diffCount.ts",
       "default": "./src/diffCount.ts"
+    },
+    "./git-graph-collapse": {
+      "types": "./src/gitGraphCollapse.ts",
+      "default": "./src/gitGraphCollapse.ts"
+    },
+    "./git-graph-layout": {
+      "types": "./src/gitGraphLayout.ts",
+      "default": "./src/gitGraphLayout.ts"
     },
     "./mcp-apps": {
       "types": "./src/mcpApps/host.ts",

@@ -287,6 +287,113 @@ export const VcsListRefsResult = Schema.Struct({
 });
 export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
+export const VCS_GRAPH_MAX_LIMIT = 1000;
+
+export const VcsGraphInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  // Absent: every local branch, tag, HEAD and the remote branches that `remoteBranches` selects.
+  ref: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(1024))),
+  // Ignored when `ref` is set. "upstreams": only remote branches that a local branch tracks.
+  remoteBranches: Schema.optional(Schema.Literals(["all", "upstreams"])),
+  firstParent: Schema.optional(Schema.Boolean),
+  query: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256))),
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(VCS_GRAPH_MAX_LIMIT))),
+});
+export type VcsGraphInput = typeof VcsGraphInput.Type;
+
+export const VcsGraphCommit = Schema.Struct({
+  sha: Schema.String,
+  parents: Schema.Array(Schema.String),
+  subject: Schema.String,
+  authorName: Schema.String,
+  authoredAt: Schema.String,
+});
+export type VcsGraphCommit = typeof VcsGraphCommit.Type;
+
+export const VcsGraphResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  // Topological order, newest first.
+  commits: Schema.Array(VcsGraphCommit),
+  nextCursor: NonNegativeInt.pipe(Schema.NullOr),
+});
+export type VcsGraphResult = typeof VcsGraphResult.Type;
+
+export const VcsRepositoryRefsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  // "upstreams" (default "all" for older clients): only remote branches a local branch tracks.
+  remoteBranches: Schema.optional(Schema.Literals(["all", "upstreams"])),
+});
+export type VcsRepositoryRefsInput = typeof VcsRepositoryRefsInput.Type;
+
+export const VcsRepositoryBranch = Schema.Struct({
+  name: Schema.String,
+  kind: Schema.Literals(["local", "remote"]),
+  sha: Schema.String,
+  upstream: Schema.NullOr(Schema.String),
+  ahead: Schema.NullOr(NonNegativeInt),
+  behind: Schema.NullOr(NonNegativeInt),
+});
+export type VcsRepositoryBranch = typeof VcsRepositoryBranch.Type;
+
+export const VcsRepositoryTag = Schema.Struct({
+  name: Schema.String,
+  sha: Schema.String,
+});
+export type VcsRepositoryTag = typeof VcsRepositoryTag.Type;
+
+export const VcsRepositoryWorktree = Schema.Struct({
+  path: Schema.String,
+  branch: Schema.NullOr(Schema.String),
+  sha: Schema.NullOr(Schema.String),
+  isMain: Schema.Boolean,
+  // The worktree that contains the requested cwd.
+  isCurrent: Schema.Boolean,
+  // Null when the worktree folder is missing or its status could not be read.
+  changedFiles: Schema.NullOr(NonNegativeInt),
+});
+export type VcsRepositoryWorktree = typeof VcsRepositoryWorktree.Type;
+
+export const VcsRepositoryRefsResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  head: Schema.Struct({
+    sha: Schema.NullOr(Schema.String),
+    branch: Schema.NullOr(Schema.String),
+  }),
+  branches: Schema.Array(VcsRepositoryBranch),
+  tags: Schema.Array(VcsRepositoryTag),
+  worktrees: Schema.Array(VcsRepositoryWorktree),
+});
+export type VcsRepositoryRefsResult = typeof VcsRepositoryRefsResult.Type;
+
+export const VcsCommitDetailsInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  sha: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(64)),
+});
+export type VcsCommitDetailsInput = typeof VcsCommitDetailsInput.Type;
+
+export const VcsCommitFileStat = Schema.Struct({
+  path: Schema.String,
+  previousPath: Schema.NullOr(Schema.String),
+  // Null for binary files.
+  additions: Schema.NullOr(NonNegativeInt),
+  deletions: Schema.NullOr(NonNegativeInt),
+});
+export type VcsCommitFileStat = typeof VcsCommitFileStat.Type;
+
+export const VcsCommitDetailsResult = Schema.Struct({
+  sha: Schema.String,
+  parents: Schema.Array(Schema.String),
+  subject: Schema.String,
+  body: Schema.String,
+  authorName: Schema.String,
+  authoredAt: Schema.String,
+  // Against the first parent, like the Diff panel's Commits source.
+  files: Schema.Array(VcsCommitFileStat),
+  filesTruncated: Schema.Boolean,
+});
+export type VcsCommitDetailsResult = typeof VcsCommitDetailsResult.Type;
+
 export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,
 });

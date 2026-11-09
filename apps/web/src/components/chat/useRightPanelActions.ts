@@ -142,6 +142,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     addDiffSurface();
   };
   const openChangesFromThreadPanelStable = useStableCallback(openChangesFromThreadPanel);
+  const addGitGraphSurface = () => {
+    if (!activeThreadRef || !isServerThread || !isGitRepo || !activeProject) return;
+    useRightPanelStore.getState().open(activeThreadRef, "git-graph");
+  };
+  const addGitGraphSurfaceStable = useStableCallback(addGitGraphSurface);
   const addFilesSurface = () => {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
@@ -345,6 +350,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     activateRightPanelSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
+    addGitGraphSurfaceStable,
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
