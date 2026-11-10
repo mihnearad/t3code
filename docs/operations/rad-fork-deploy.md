@@ -97,20 +97,58 @@ t3 service status
 
 ## Build the Mac desktop app
 
-Do this on the Mac, from a checkout of `rad` that is pushed to the fork. Use the
-same version number as the servers.
+Do this on the Mac, after you push `rad` to the fork. Use the same version
+number as the servers. The Mac keeps a permanent checkout of the fork. Clone it
+one time only:
 
 ```sh
-git clone https://github.com/mihnearad/t3code.git && cd t3code && git checkout rad
+git clone https://github.com/mihnearad/t3code.git <checkout> && git -C <checkout> checkout rad
+```
+
+For each update, set `T3_DIR` and `V` and paste the script below into the
+terminal. It pulls `rad`, builds the `.dmg`, quits the app, moves the installed
+app to `~/T3-app-backup`, installs the new app in `/Applications` and opens it.
+
+```sh
+T3_DIR=<checkout>
+V=0.1.8-preview.20261108.1
+(
+set -euo pipefail
+cd "$T3_DIR"
+git restore . && git checkout rad && git pull --ff-only origin rad
 vp i
 node scripts/update-release-package-versions.ts "$V"
 vp run build:desktop:bundle
 vp run dist:desktop:dmg:arm64
+DMG="release/T3-Code-$V-arm64.dmg"; [ -f "$DMG" ]
+MNT=$(hdiutil attach "$DMG" -nobrowse | grep -o '/Volumes/.*' | head -1); [ -d "$MNT" ]
+APP=$(ls -d "$MNT"/*.app | head -1); NAME=$(basename "$APP"); [ -n "$NAME" ] && [ -d "$APP" ]
+osascript -e "quit app \"${NAME%.app}\"" || true; sleep 2
+mkdir -p ~/T3-app-backup && rm -rf ~/T3-app-backup/"$NAME"
+[ -d "/Applications/$NAME" ] && mv "/Applications/$NAME" ~/T3-app-backup/
+ditto "$APP" "/Applications/$NAME"
+hdiutil detach "$MNT"
+xattr -cr "/Applications/$NAME"
+open "/Applications/$NAME"
+)
 ```
 
-Quit the nightly app and move it out of `/Applications` to a backup folder.
-Then install the `.dmg` from `release/`. The build is not signed, so the first
-launch needs right-click, then Open.
+Obey these rules when you change the script:
+
+- Keep `set -euo pipefail` in the subshell, and keep the checks before the
+  lines that change `/Applications`. Without them, a failed step leaves
+  `$NAME` empty and the next lines operate on `/Applications` itself.
+- `git restore .` discards all uncommitted changes in the checkout. The
+  version step changes every `package.json` and the next pull fails if these
+  changes stay. Do not edit files by hand in this checkout.
+- A preview version builds an app named `T3 Code (Beta).app`. A nightly build
+  is named `T3 Code (Nightly).app`, so the two can stay in `/Applications`
+  together.
+- The `hdiutil` deprecation warnings have no effect on the result.
+
+The build is not signed. If macOS blocks the first launch, right-click the app,
+then select Open. To go back to the previous build, quit the app and move it
+back from `~/T3-app-backup` to `/Applications`.
 
 ## Roll back to the nightly
 
@@ -121,4 +159,5 @@ nightly again from GitHub:
 t3 update --channel nightly --allow-downgrade
 ```
 
-On the Mac, put the nightly app back from the backup folder.
+On the Mac, quit `T3 Code (Beta)` and open `T3 Code (Nightly)`. If you removed
+the nightly app, download it again from the GitHub releases page.
