@@ -102,10 +102,12 @@ describe("RightPanelTabs", () => {
           onAddBrowserInProfile={noop}
           onAddTerminal={noop}
           onAddDiff={noop}
+          onAddGitGraph={noop}
           onAddFiles={noop}
           onAddPullRequest={noop}
           onAddPullRequests={noop}
           onAddDevice={noop}
+          gitGraphAvailable={false}
           browserAvailable={false}
           terminalAvailable
           diffAvailable={false}
@@ -175,6 +177,8 @@ function panel(activeSurface: RightPanelSurface) {
     onAddBrowserInProfile: noop,
     onAddTerminal: noop,
     onAddDiff: noop,
+    onAddGitGraph: noop,
+    gitGraphAvailable: false,
     onAddFiles: noop,
     onAddPullRequest: noop,
     onAddPullRequests: noop,

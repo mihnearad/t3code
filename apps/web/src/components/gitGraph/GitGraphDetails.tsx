@@ -6,7 +6,7 @@ import { useRef, type ReactNode } from "react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useDiffPanelStore } from "~/diffPanelStore";
-import { selectActiveRightPanel, useRightPanelStore } from "~/rightPanelStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { gitGraphEnvironment } from "~/state/gitGraph";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -29,9 +29,7 @@ import {
 } from "./gitGraph.logic";
 
 function openCommitInDiff(threadRef: ScopedThreadRef, sha: string) {
-  const diffOpen =
-    selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef) === "diff";
-  useDiffPanelStore.getState().selectCommit(threadRef, sha, !diffOpen);
+  useDiffPanelStore.getState().selectCommit(threadRef, sha);
   useRightPanelStore.getState().open(threadRef, "diff");
 }
 
