@@ -31,9 +31,12 @@ When the right panel is maximized or wide, the surface has three columns:
    branch), ref badges (HEAD, branch, remote branch, tag, worktree), subject,
    author, relative date, short hash. Uncommitted changes of a worktree show as
    a dashed node above its branch tip.
-3. **Commit details** (right): ref badges, subject, message, commit, parents,
-   author, date, the branches that contain it, and the changed files with
-   +/- counts. **Open in Diff** opens the commit in the Diff surface through
+3. **Commit details** (right): ref badges, subject, commit, parents, author,
+   date, the branches that contain it, then the loaded part: message, git
+   trailers (such as Co-Authored-By) as label rows, and the changed files with
+   +/- counts. The loaded part sits below the fixed part, and the last loaded
+   commit stays on screen, dimmed, until the next one arrives, so the card
+   does not jump. **Open in Diff** opens the commit in the Diff surface through
    the existing **Commits** source.
 
 When the panel is narrow (the default width), the refs become one select at the

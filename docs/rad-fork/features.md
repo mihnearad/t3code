@@ -27,3 +27,4 @@ Add a row when you start a plan, and update it when the feature lands on `rad`.
 | 07/11/2026 | Private update feed and deploy steps    | Shipped | -                                    | `4b14a8e161`               | Fork only |
 | 09/11/2026 | Git graph surface                       | Shipped | [git-graph.md](./plans/git-graph.md) | `feature/git-graph` merge  | Not sent  |
 | 09/11/2026 | Files sidebar: performance fixes        | Shipped | -                                    | `5e7658e4a7`               | Not sent  |
+| 12/11/2026 | Git graph: steady commit details card   | Shipped | [git-graph.md](./plans/git-graph.md) | `79cd702566`               | Not sent  |
