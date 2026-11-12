@@ -881,10 +881,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           const created = createFinder(options);
           if (created.ok) {
             const finder = created.value;
-            const scanFiles = finder.scanFiles.bind(finder);
-            finder.scanFiles = () => {
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
               rescans += 1;
-              return scanFiles();
+              return scanFilesAsync();
             };
           }
           return created;
