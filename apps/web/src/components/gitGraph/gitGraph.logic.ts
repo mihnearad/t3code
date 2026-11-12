@@ -281,3 +281,40 @@ export function formatCommitDate(isoDate: string): string {
 export function refBadgeLabel(badge: GitGraphRefBadge): string {
   return badge.kind === "head" ? "HEAD" : badge.name;
 }
+
+export interface CommitTrailer {
+  label: string;
+  value: string;
+}
+
+const TRAILER_LINE = /^([A-Za-z0-9][A-Za-z0-9-]*):[ \t]+(\S.*)$/;
+const TRAILER_LABELS: Record<string, string> = {
+  "co-authored-by": "Co-author",
+  "signed-off-by": "Signed-off",
+};
+
+/** Git trailers are the last paragraph of the body when every line is `Key: value`. */
+export function splitCommitTrailers(body: string): {
+  message: string;
+  trailers: CommitTrailer[];
+} {
+  const paragraphs = body.trim().split(/\n[ \t]*\n/);
+  const lines = (paragraphs.at(-1) ?? "").split("\n");
+  const matches = lines.map((line) => TRAILER_LINE.exec(line.trim()));
+  if (matches.some((match) => match === null)) {
+    return { message: body.trim(), trailers: [] };
+  }
+  return {
+    message: paragraphs.slice(0, -1).join("\n\n").trim(),
+    trailers: matches.flatMap((match) =>
+      match === null
+        ? []
+        : [
+            {
+              label: TRAILER_LABELS[match[1]!.toLowerCase()] ?? match[1]!,
+              value: match[2]!.trim(),
+            },
+          ],
+    ),
+  };
+}

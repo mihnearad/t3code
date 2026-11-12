@@ -1,9 +1,10 @@
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, VcsCommitDetailsResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Copy, FileDiff, File as FileIcon } from "lucide-react";
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { cn } from "~/lib/utils";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useDiffPanelStore } from "~/diffPanelStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -25,6 +26,7 @@ import {
   formatCommitDate,
   pathBasename,
   refBadgeLabel,
+  splitCommitTrailers,
   type GitGraphDisplayRow,
 } from "./gitGraph.logic";
 
@@ -172,7 +174,10 @@ export function GitGraphDetails(props: {
           input: { cwd: props.cwd, sha },
         }),
   );
-  const details = detailsQuery.data;
+  const details = detailsQuery.data?.sha === sha ? detailsQuery.data : null;
+  // Keep the last loaded commit on screen while the next one loads, so the card does not collapse.
+  const [shownDetails, setShownDetails] = useState<VcsCommitDetailsResult | null>(details);
+  if (details !== null && details !== shownDetails) setShownDetails(details);
   if (row.worktree) {
     const worktree = row.worktree;
     return (
@@ -204,23 +209,24 @@ export function GitGraphDetails(props: {
   const commit = row.commit;
   if (commit === null || sha === null) return null;
   const subject = details?.subject ?? commit.subject;
+  const parents = details?.parents ?? commit.parents;
+  const loaded = details ?? shownDetails;
+  const stale = details === null && loaded !== null;
+  const { message, trailers } = splitCommitTrailers(loaded?.body ?? "");
   return (
     <DetailsShell layout={props.layout}>
       <RefBadges row={row} />
       <div className="text-sm font-medium text-foreground">{subject}</div>
-      {details?.body ? (
-        <p className="whitespace-pre-line text-sm text-foreground/75">{details.body}</p>
-      ) : null}
       <dl className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
         <Field label="Commit">
           <span className="font-mono">{sha}</span>
         </Field>
         <Field label="Parents">
-          {(details?.parents ?? commit.parents).length === 0 ? (
+          {parents.length === 0 ? (
             "None"
           ) : (
             <span className="font-mono">
-              {(details?.parents ?? commit.parents).map((parent) => parent.slice(0, 7)).join(", ")}
+              {parents.map((parent) => parent.slice(0, 7)).join(", ")}
             </span>
           )}
         </Field>
@@ -244,52 +250,68 @@ export function GitGraphDetails(props: {
             Retry
           </Button>
         </div>
-      ) : details === null ? (
+      ) : loaded === null ? (
         <div className="flex flex-col gap-1.5">
-          <Skeleton className="h-4 w-1/3" />
           <Skeleton className="h-4 w-full" />
           <Skeleton className="h-4 w-4/5" />
+          <Skeleton className="mt-2 h-4 w-1/3" />
+          <Skeleton className="h-4 w-full" />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-col gap-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-foreground">
-              {details.files.length} changed {details.files.length === 1 ? "file" : "files"}
-              {details.filesTruncated ? " (truncated)" : ""}
-            </span>
-            <span className="font-mono tabular-nums">
-              <span className="text-diff-addition-foreground">
-                +{formatCompactDiffCount(sum(details.files.map((file) => file.additions)))}
-              </span>{" "}
-              <span className="text-diff-deletion-foreground">
-                -{formatCompactDiffCount(sum(details.files.map((file) => file.deletions)))}
+        <div aria-busy={stale} className={cn("flex min-h-0 flex-col gap-3", stale && "opacity-50")}>
+          {message ? (
+            <p className="whitespace-pre-line text-sm text-foreground/75">{message}</p>
+          ) : null}
+          {trailers.length > 0 ? (
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+              {trailers.map((trailer) => (
+                <Field key={`${trailer.label}:${trailer.value}`} label={trailer.label}>
+                  {trailer.value}
+                </Field>
+              ))}
+            </dl>
+          ) : null}
+          <div className="flex min-h-0 flex-col gap-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium text-foreground">
+                {loaded.files.length} changed {loaded.files.length === 1 ? "file" : "files"}
+                {loaded.filesTruncated ? " (truncated)" : ""}
               </span>
-            </span>
+              <span className="font-mono tabular-nums">
+                <span className="text-diff-addition-foreground">
+                  +{formatCompactDiffCount(sum(loaded.files.map((file) => file.additions)))}
+                </span>{" "}
+                <span className="text-diff-deletion-foreground">
+                  -{formatCompactDiffCount(sum(loaded.files.map((file) => file.deletions)))}
+                </span>
+              </span>
+            </div>
+            <ul className="flex flex-col">
+              {loaded.files.map((file) => (
+                <li key={file.path}>
+                  <button
+                    type="button"
+                    disabled={stale}
+                    className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-1 py-1 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none"
+                    onClick={() => openCommitInDiff(props.threadRef, sha)}
+                  >
+                    <FileIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+                    <MiddleTruncate value={file.path} className="flex-1" />
+                    <span className="shrink-0 font-mono tabular-nums">
+                      {file.additions === null || file.deletions === null ? (
+                        <span className="text-muted-foreground">binary</span>
+                      ) : (
+                        <>
+                          <span className="text-diff-addition-foreground">+{file.additions}</span>{" "}
+                          <span className="text-diff-deletion-foreground">-{file.deletions}</span>
+                        </>
+                      )}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="flex flex-col">
-            {details.files.map((file) => (
-              <li key={file.path}>
-                <button
-                  type="button"
-                  className="flex w-full cursor-pointer items-center gap-2 rounded-sm px-1 py-1 text-left text-xs outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  onClick={() => openCommitInDiff(props.threadRef, sha)}
-                >
-                  <FileIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                  <MiddleTruncate value={file.path} className="flex-1" />
-                  <span className="shrink-0 font-mono tabular-nums">
-                    {file.additions === null || file.deletions === null ? (
-                      <span className="text-muted-foreground">binary</span>
-                    ) : (
-                      <>
-                        <span className="text-diff-addition-foreground">+{file.additions}</span>{" "}
-                        <span className="text-diff-deletion-foreground">-{file.deletions}</span>
-                      </>
-                    )}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
     </DetailsShell>

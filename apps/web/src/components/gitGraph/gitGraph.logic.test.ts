@@ -8,6 +8,7 @@ import {
   findWorktreeThread,
   gitGraphHistoryRevision,
   gitGraphRefsRevision,
+  splitCommitTrailers,
   worktreeRowKey,
 } from "./gitGraph.logic";
 
@@ -291,5 +292,35 @@ describe("git graph status revisions", () => {
   it("moves only the refs revision with working-tree changes", () => {
     expect(gitGraphHistoryRevision(withChanges)).toBe(gitGraphHistoryRevision(base));
     expect(gitGraphRefsRevision(withChanges)).not.toBe(gitGraphRefsRevision(base));
+  });
+});
+
+describe("splitCommitTrailers", () => {
+  it("moves the trailer paragraph out of the message", () => {
+    expect(
+      splitCommitTrailers(
+        "Record the rollout.\nUpdate the READMEs.\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nRefs: #12\n",
+      ),
+    ).toEqual({
+      message: "Record the rollout.\nUpdate the READMEs.",
+      trailers: [
+        { label: "Co-author", value: "Claude <noreply@anthropic.com>" },
+        { label: "Refs", value: "#12" },
+      ],
+    });
+  });
+
+  it("reads a body that holds only trailers", () => {
+    expect(splitCommitTrailers("Signed-off-by: Ana <ana@example.com>")).toEqual({
+      message: "",
+      trailers: [{ label: "Signed-off", value: "Ana <ana@example.com>" }],
+    });
+  });
+
+  it("keeps a last paragraph that is not all trailers", () => {
+    expect(splitCommitTrailers("Intro.\n\nNote: this stays\nbecause of this line")).toEqual({
+      message: "Intro.\n\nNote: this stays\nbecause of this line",
+      trailers: [],
+    });
   });
 });
