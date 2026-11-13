@@ -28,3 +28,4 @@ Add a row when you start a plan, and update it when the feature lands on `rad`.
 | 09/11/2026 | Git graph surface                       | Shipped | [git-graph.md](./plans/git-graph.md) | `feature/git-graph` merge  | Not sent  |
 | 09/11/2026 | Files sidebar: performance fixes        | Shipped | -                                    | `5e7658e4a7`               | Not sent  |
 | 12/11/2026 | Git graph: steady commit details card   | Shipped | [git-graph.md](./plans/git-graph.md) | `79cd702566`               | Not sent  |
+| 13/11/2026 | Nightly merge script                    | Shipped | -                                    | this commit                | Fork only |

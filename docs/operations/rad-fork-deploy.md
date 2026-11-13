@@ -9,6 +9,22 @@ The Linux hosts run the normal `t3` service. We install our build through
 automatic rollback on a failed start continue to work. The Mac runs only the
 desktop app, which we build on the Mac.
 
+## Merge an upstream nightly
+
+On a clean `rad` checkout, run:
+
+```sh
+scripts/rad-merge-nightly.sh            # the newest nightly tag
+scripts/rad-merge-nightly.sh <tag>      # or a specific tag
+```
+
+The script merges the tag, stops on conflicts or duplicate migration numbers,
+runs `vp i` and then `vp run check:changed <tag>`. Against the tag, the
+changed files are the fork's own changes, so the check selects the tests for
+our features. The script prints the files that both sides changed, because
+upstream can rename code that our features or tests use. It does not push,
+build or restart.
+
 ## Version number
 
 Use the `preview` shape: `<base>-preview.<YYYYMMDD>.<n>`, for example
