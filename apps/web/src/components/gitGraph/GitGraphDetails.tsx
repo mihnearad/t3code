@@ -1,6 +1,6 @@
 import type { EnvironmentId, ScopedThreadRef, VcsCommitDetailsResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Copy, FileDiff, File as FileIcon } from "lucide-react";
+import { Check, Copy, FileDiff, File as FileIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -12,7 +12,6 @@ import { gitGraphEnvironment } from "~/state/gitGraph";
 import { useEnvironmentQuery } from "~/state/query";
 import {
   showAnchoredCopyErrorToast,
-  showAnchoredCopySuccessToast,
   ANCHORED_COPY_TOAST_TIMEOUT_MS,
 } from "../ui/anchoredCopyToast";
 import { Button } from "../ui/button";
@@ -42,15 +41,14 @@ function openUncommittedInDiff(threadRef: ScopedThreadRef) {
 
 function CopyHashButton({ sha }: { sha: string }) {
   const ref = useRef<HTMLButtonElement>(null);
-  const { copyToClipboard } = useCopyToClipboard<void>({
-    onCopy: () => showAnchoredCopySuccessToast(ref),
+  const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
     onError: (error) => showAnchoredCopyErrorToast(ref, error),
     timeout: ANCHORED_COPY_TOAST_TIMEOUT_MS,
   });
   return (
     <Button ref={ref} variant="outline" size="xs" onClick={() => copyToClipboard(sha, undefined)}>
-      <Copy />
-      Copy hash
+      {isCopied ? <Check /> : <Copy />}
+      {isCopied ? "Copied" : "Copy hash"}
     </Button>
   );
 }
