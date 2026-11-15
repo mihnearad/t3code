@@ -37,6 +37,10 @@ necessary.
 
 ## Build the Linux archive
 
+The native executable step needs the exact Node version in the root `package.json`
+engines (26.13.1 at the time of writing). Put that Node first in `PATH`, or the
+build stops with "Native CLI executables must be built with Node ...".
+
 Build in a separate worktree, because the version step changes every
 `package.json`. You need `vp`, `cargo` and `patchelf`. If `patchelf` is not
 installed, `uv tool install patchelf` installs it without sudo.
@@ -88,7 +92,7 @@ Restarting the service stops all agent turns, terminals and remote clients on
 that host. Make sure nothing important is running first.
 
 ```sh
-cd ~/t3-rad-feed   # the folder that contains v<V>/
+cd ~/t3-rad-feed   # the feed folder itself, the one that contains v<V>/, not its parent
 python3 -m http.server 18765 --bind 127.0.0.1 &
 SERVER_PID=$!
 T3CODE_RELEASE_BASE_URL=http://127.0.0.1:18765 t3 update "$V" --yes
@@ -122,8 +126,9 @@ git clone https://github.com/mihnearad/t3code.git <checkout> && git -C <checkout
 ```
 
 For each update, set `T3_DIR` and `V` and paste the script below into the
-terminal. It pulls `rad`, builds the `.dmg`, quits the app, moves the installed
-app to `~/T3-app-backup`, installs the new app in `/Applications` and opens it.
+terminal. It pulls `rad`, builds the `.dmg`, quits the app, archives the
+installed app as a zip in `~/T3-app-backup`, installs the new app in
+`/Applications`, signs it and opens it.
 
 ```sh
 T3_DIR=<checkout>
@@ -140,10 +145,16 @@ DMG="release/T3-Code-$V-arm64.dmg"; [ -f "$DMG" ]
 MNT=$(hdiutil attach "$DMG" -nobrowse | grep -o '/Volumes/.*' | head -1); [ -d "$MNT" ]
 APP=$(ls -d "$MNT"/*.app | head -1); NAME=$(basename "$APP"); [ -n "$NAME" ] && [ -d "$APP" ]
 osascript -e "quit app \"${NAME%.app}\"" || true; sleep 2
-mkdir -p ~/T3-app-backup && rm -rf ~/T3-app-backup/"$NAME"
-[ -d "/Applications/$NAME" ] && mv "/Applications/$NAME" ~/T3-app-backup/
+mkdir -p ~/T3-app-backup
+if [ -d "/Applications/$NAME" ]; then
+  rm -f ~/T3-app-backup/"${NAME%.app}-previous.zip"
+  ditto -c -k --keepParent "/Applications/$NAME" ~/T3-app-backup/"${NAME%.app}-previous.zip"
+  rm -rf "/Applications/$NAME"
+fi
 ditto "$APP" "/Applications/$NAME"
 hdiutil detach "$MNT"
+codesign --force --deep --sign "<identity-hash>" "/Applications/$NAME"
+codesign --verify --deep --strict "/Applications/$NAME"
 xattr -cr "/Applications/$NAME"
 open "/Applications/$NAME"
 )
@@ -161,10 +172,21 @@ Obey these rules when you change the script:
   is named `T3 Code (Nightly).app`, so the two can stay in `/Applications`
   together.
 - The `hdiutil` deprecation warnings have no effect on the result.
+- Keep the old app as a zip, not as a second `.app`. Two bundles with the same
+  bundle ID confuse macOS, and zip files are not registered as apps.
+- The `codesign` identity is the SHA-1 hash of the Apple Development
+  certificate (from `security find-identity`). A stable identity keeps the Local
+  Network permission across rebuilds. `codesign --verify` stops the script, so a
+  bad signature never launches. Sign before `xattr -cr`; this is the tested
+  order.
 
-The build is not signed. If macOS blocks the first launch, right-click the app,
-then select Open. To go back to the previous build, quit the app and move it
-back from `~/T3-app-backup` to `/Applications`.
+If macOS blocks the first launch, right-click the app, then select Open. To go
+back to the previous build, quit the app, remove it from `/Applications`, and
+unzip `~/T3-app-backup/<name>-previous.zip` into `/Applications`:
+
+```sh
+ditto -x -k ~/T3-app-backup/"T3 Code (Beta)-previous.zip" /Applications
+```
 
 ## Roll back to the nightly
 
