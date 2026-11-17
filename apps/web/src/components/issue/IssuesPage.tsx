@@ -667,6 +667,7 @@ export function IssuesPage() {
             onAddBrowserInProfile={() => undefined}
             onAddTerminal={() => undefined}
             onAddDiff={() => undefined}
+            onAddGitGraph={() => undefined}
             onAddFiles={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
@@ -674,6 +675,7 @@ export function IssuesPage() {
             browserAvailable={false}
             terminalAvailable={false}
             diffAvailable={false}
+            gitGraphAvailable={false}
             filesAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
