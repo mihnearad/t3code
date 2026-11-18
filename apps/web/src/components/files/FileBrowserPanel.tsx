@@ -58,6 +58,7 @@ import {
   setRootDropHighlight,
 } from "./fileTreeRootDrop";
 import { captureDroppedEntries, collectDroppedFiles, type DroppedEntry } from "./droppedFiles";
+import { useWorkspaceDownload } from "./useWorkspaceDownload";
 import { useWorkspaceUpload } from "./useWorkspaceUpload";
 import { WorkspaceUploadStatus } from "./WorkspaceUploadStatus";
 import { useWorkspaceEntryActions } from "./useWorkspaceEntryActions";
@@ -217,6 +218,7 @@ export default function FileBrowserPanel({
   } | null>(null);
   const entryActions = useWorkspaceEntryActions(environmentId, cwd);
   const upload = useWorkspaceUpload(environmentId, cwd);
+  const download = useWorkspaceDownload(environmentId, cwd);
   const uploadDroppedFiles = async (folderPath: string, captured: DroppedEntry[] | File[]) => {
     const { files, skipped } = await collectDroppedFiles(captured);
     if (files.length === 0 && skipped.length === 0) return;
@@ -345,6 +347,7 @@ export default function FileBrowserPanel({
         return;
       }
       const relativePath = item.path.replace(/\/$/, "");
+      const isDirectory = item.path.endsWith("/");
       const mention = serializeComposerFileLink(panelPath(relativePath));
       const pointer = contextMenuPointerRef.current;
       const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
@@ -360,6 +363,7 @@ export default function FileBrowserPanel({
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
+            ...(isDirectory ? [] : [{ id: "download", label: gt("Download") }]),
             { id: "copy-mention", label: gt("Copy mention") },
             { id: "add-to-chat", label: gt("Add to chat") },
             ...(canCreateEntries
@@ -374,7 +378,10 @@ export default function FileBrowserPanel({
           position,
         );
         if (clicked === null) return;
-        const isDirectory = item.path.endsWith("/");
+        if (clicked === "download") {
+          await download(panelPath(relativePath));
+          return;
+        }
         if (clicked === "new-file" || clicked === "new-folder") {
           setNewEntry({
             kind: clicked === "new-folder" ? "folder" : "file",
@@ -717,7 +724,7 @@ export default function FileBrowserPanel({
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
       onDragOver={(event) => {
-        if (isFinderFileDrag(event) && canCreateEntries && !upload.progressStore.isActive()) {
+        if (isFinderFileDrag(event) && canCreateEntries) {
           event.preventDefault();
           event.dataTransfer.dropEffect = "copy";
           const folder = fileDropFolder(event.nativeEvent);
@@ -741,7 +748,7 @@ export default function FileBrowserPanel({
       onDrop={(event) => {
         setRootDropHighlight(event.currentTarget, false);
         if (isFinderFileDrag(event)) {
-          if (!canCreateEntries || upload.progressStore.isActive()) return;
+          if (!canCreateEntries) return;
           event.preventDefault();
           void uploadDroppedFiles(
             fileDropFolder(event.nativeEvent),

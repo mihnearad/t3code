@@ -24,8 +24,15 @@ import type { DroppedFile } from "./droppedFiles";
 import { createUploadProgressStore, type WorkspaceUploadProgress } from "./uploadProgressStore";
 import { joinWorkspacePath, parentWorkspacePath } from "./workspaceEntryName";
 
-const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const UPLOAD_CONCURRENCY = 3;
+// A slow link is fine as long as bytes keep moving; only a stalled request is given up.
+const UPLOAD_STALL_MS = 60_000;
+const UPLOAD_RETRY_DELAYS_MS = [1_000, 4_000];
+
+/** Marks a failure worth another attempt with a fresh URL: a dropped connection or a server hiccup. */
+const TRANSIENT = Symbol("transient upload failure");
+const transientError = (message: string) => new Error(message, { cause: TRANSIENT });
+const isTransient = (error: unknown) => error instanceof Error && error.cause === TRANSIENT;
 
 function postBytes(
   url: string,
@@ -35,27 +42,58 @@ function postBytes(
 ) {
   const xhr = new XMLHttpRequest();
   register(() => xhr.abort());
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<"uploaded" | "exists">((resolve, reject) => {
+    let stalled = false;
+    let stallTimer: ReturnType<typeof setTimeout> | undefined;
+    const watchStall = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        xhr.abort();
+      }, UPLOAD_STALL_MS);
+    };
+    xhr.addEventListener("loadend", () => clearTimeout(stallTimer));
     xhr.open("POST", url, true);
-    xhr.timeout = UPLOAD_TIMEOUT_MS;
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
-    xhr.upload.addEventListener("progress", (event) => onProgress(event.loaded));
-    xhr.addEventListener("load", () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else
-        reject(
-          new Error(
-            xhr.responseText.trim() ||
-              m(msg("Upload rejected ({status})."), { status: xhr.status }),
-          ),
-        );
+    xhr.upload.addEventListener("progress", (event) => {
+      watchStall();
+      onProgress(event.loaded);
     });
-    xhr.addEventListener("error", () => reject(new Error(m(msg("Upload failed.")))));
-    xhr.addEventListener("timeout", () => reject(new Error(m(msg("Upload timed out.")))));
-    xhr.addEventListener("abort", () => reject(new Error(m(msg("Upload cancelled.")))));
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve("uploaded");
+      // The file appeared after the URL was issued; the replace prompt handles it.
+      else if (xhr.status === 409) resolve("exists");
+      else {
+        const message =
+          xhr.responseText.trim() || m(msg("Upload rejected ({status})."), { status: xhr.status });
+        reject(
+          xhr.status >= 500 || xhr.status === 404 || xhr.status === 408 || xhr.status === 429
+            ? transientError(message)
+            : new Error(message),
+        );
+      }
+    });
+    xhr.addEventListener("error", () => reject(transientError(m(msg("Upload failed.")))));
+    xhr.addEventListener("abort", () =>
+      reject(
+        stalled
+          ? transientError(m(msg("Upload stalled.")))
+          : new Error(m(msg("Upload cancelled."))),
+      ),
+    );
+    watchStall();
     xhr.send(file);
   });
 }
+
+const waitForRetry = (delayMs: number, isCancelled: () => boolean) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, delayMs);
+    if (isCancelled()) {
+      clearTimeout(timer);
+      resolve();
+    }
+  });
 
 const describeError = (error: unknown) =>
   error instanceof Error && error.message ? error.message : m(msg("Upload failed."));
@@ -78,7 +116,7 @@ interface UploadBatch {
 }
 
 // Kept outside the hook: the React Compiler does not compile the counters this loop updates.
-async function runUploadBatch(batch: UploadBatch) {
+export async function runUploadBatch(batch: UploadBatch) {
   const failures = batch.skipped.map((path) => m(msg("{path}: skipped"), { path }));
   const tooLarge = batch.files.filter((dropped) => dropped.file.size > PROJECT_UPLOAD_MAX_BYTES);
   for (const dropped of tooLarge) {
@@ -110,9 +148,7 @@ async function runUploadBatch(batch: UploadBatch) {
   };
 
   // "exists" when overwrite is off and the file is already there.
-  const uploadOne = async (dropped: DroppedFile, overwrite: boolean) => {
-    const relativePath = joinWorkspacePath(batch.folderPath, dropped.relativePath);
-    currentPath = relativePath;
+  const attemptUpload = async (dropped: DroppedFile, relativePath: string, overwrite: boolean) => {
     inFlightBytes.set(dropped, 0);
     report();
     const issued = await batch.createUploadUrl({
@@ -125,11 +161,11 @@ async function runUploadBatch(batch: UploadBatch) {
     const url = connection
       ? resolveAssetUrl(connection.httpBaseUrl, issued.value.relativeUrl)
       : null;
-    if (!url) throw new Error(m(msg("The environment is not connected.")));
+    if (!url) throw transientError(m(msg("The environment is not connected.")));
     if (batch.isCancelled()) throw new Error(m(msg("Upload cancelled.")));
     let unregister = () => {};
     try {
-      await postBytes(
+      return await postBytes(
         url,
         dropped.file,
         (loaded) => {
@@ -143,9 +179,26 @@ async function runUploadBatch(batch: UploadBatch) {
     } finally {
       unregister();
     }
-    changedFolders.add(parentWorkspacePath(relativePath));
-    uploaded += 1;
-    return "uploaded";
+  };
+
+  // Each attempt asks for a new URL, because a URL is spent once its request reaches the server.
+  const uploadOne = async (dropped: DroppedFile, overwrite: boolean) => {
+    const relativePath = joinWorkspacePath(batch.folderPath, dropped.relativePath);
+    currentPath = relativePath;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const result = await attemptUpload(dropped, relativePath, overwrite);
+        if (result === "exists") return result;
+        changedFolders.add(parentWorkspacePath(relativePath));
+        uploaded += 1;
+        return result;
+      } catch (error) {
+        const delayMs = UPLOAD_RETRY_DELAYS_MS[attempt];
+        if (!isTransient(error) || delayMs === undefined) throw error;
+        await waitForRetry(delayMs, batch.isCancelled);
+        if (batch.isCancelled()) throw error;
+      }
+    }
   };
 
   const uploadAll = async (queue: readonly DroppedFile[], overwrite: boolean) => {
@@ -235,10 +288,12 @@ export function useWorkspaceUpload(environmentId: EnvironmentId, cwd: string) {
   });
   const [progressStore] = useState(createUploadProgressStore);
   const abortsRef = useRef(new Set<() => void>());
-  const cancelledRef = useRef(false);
+  // Cancel moves the generation on, which stops the running batch and every queued one.
+  const generationRef = useRef(0);
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
 
   const cancel = () => {
-    cancelledRef.current = true;
+    generationRef.current += 1;
     for (const abort of abortsRef.current) abort();
   };
 
@@ -249,22 +304,29 @@ export function useWorkspaceUpload(environmentId: EnvironmentId, cwd: string) {
     /** Called with the folders that gained or changed files, after the batch ends. */
     readonly onFoldersChanged: (folders: ReadonlySet<string>) => void;
   }) => {
-    if (progressStore.isActive()) return Promise.resolve();
-    cancelledRef.current = false;
-    return runUploadBatch({
-      ...input,
-      environmentId,
-      cwd,
-      createUploadUrl,
-      setProgress: progressStore.set,
-      addAbort: (abort) => {
-        abortsRef.current.add(abort);
-        return () => {
-          abortsRef.current.delete(abort);
-        };
-      },
-      isCancelled: () => cancelledRef.current,
-    });
+    const generation = generationRef.current;
+    const isCancelled = () => generationRef.current !== generation;
+    // A drop during an upload waits for the batches before it.
+    const run = queueRef.current.then(() =>
+      isCancelled()
+        ? undefined
+        : runUploadBatch({
+            ...input,
+            environmentId,
+            cwd,
+            createUploadUrl,
+            setProgress: progressStore.set,
+            addAbort: (abort) => {
+              abortsRef.current.add(abort);
+              return () => {
+                abortsRef.current.delete(abort);
+              };
+            },
+            isCancelled,
+          }),
+    );
+    queueRef.current = run.catch(() => undefined);
+    return run;
   };
 
   return { progressStore, start, cancel };
