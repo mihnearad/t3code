@@ -29,5 +29,5 @@ Add a row when you start a plan, and update it when the feature lands on `rad`.
 | 09/11/2026 | Files sidebar: performance fixes        | Shipped | -                                    | `5e7658e4a7`               | Not sent  |
 | 12/11/2026 | Git graph: steady commit details card   | Shipped | [git-graph.md](./plans/git-graph.md) | `79cd702566`               | Not sent  |
 | 13/11/2026 | Nightly merge script                    | Shipped | -                                    | this commit                | Fork only |
-| 18/11/2026 | Files sidebar: download files           | Ready   | -                                    | not committed              | Not sent  |
-| 18/11/2026 | Files sidebar: more robust uploads      | Ready   | -                                    | not committed              | Not sent  |
+| 18/11/2026 | Files sidebar: download files           | Shipped | -                                    | `4d784a5541`               | Not sent  |
+| 18/11/2026 | Files sidebar: more robust uploads      | Shipped | -                                    | `4d784a5541`               | Not sent  |
