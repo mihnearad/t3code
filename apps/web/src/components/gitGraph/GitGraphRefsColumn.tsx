@@ -5,6 +5,7 @@ import type {
   VcsRepositoryWorktree,
 } from "@t3tools/contracts";
 import { Cloud, FolderGit2, Tag } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import * as Schema from "effect/Schema";
 import { memo, useRef, useState, type ReactNode } from "react";
 
@@ -65,7 +66,9 @@ function Section(props: {
           {props.children}
           {props.hidden && props.onShowMore ? (
             <Button variant="ghost" size="xs" onClick={props.onShowMore}>
-              Show {Math.min(props.hidden, SECTION_PAGE)} more
+              <T>
+                Show <Var>{Math.min(props.hidden, SECTION_PAGE)}</Var> more
+              </T>
             </Button>
           ) : null}
         </div>
@@ -105,11 +108,15 @@ function WorktreeRow(props: {
           className="font-medium text-foreground"
         />
         {worktree.isMain ? (
-          <span className="shrink-0 text-muted-foreground">main checkout</span>
+          <span className="shrink-0 text-muted-foreground">
+            <T>main checkout</T>
+          </span>
         ) : null}
         {changed > 0 ? (
           <span className="ms-auto shrink-0 text-warning-foreground tabular-nums">
-            {changed} changed
+            <T>
+              <Var>{changed}</Var> changed
+            </T>
           </span>
         ) : null}
       </button>
@@ -215,6 +222,7 @@ export const GitGraphRefsColumn = memo(function GitGraphRefsColumn(props: {
   onSelectWorktree: (worktree: VcsRepositoryWorktree) => void;
 }) {
   const { refs, colorBySha, onSelectSha, onSelectWorktree } = props;
+  const gt = useGT();
   const columnRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useLocalStorage(WIDTH_KEY, WIDTH_DEFAULT, Schema.Number);
   const [closed, setClosed] = useState<ReadonlySet<string>>(DEFAULT_CLOSED);
@@ -269,14 +277,14 @@ export const GitGraphRefsColumn = memo(function GitGraphRefsColumn(props: {
             <Input
               type="search"
               size="compact"
-              aria-label="Filter refs"
-              placeholder="Filter refs"
+              aria-label={gt("Filter refs")}
+              placeholder={gt("Filter refs")}
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
           </div>
           <Section
-            title="Worktrees"
+            title={gt("Worktrees")}
             count={lists.worktrees.length}
             open={isOpen("worktrees")}
             onToggle={() => toggle("worktrees")}
@@ -291,7 +299,7 @@ export const GitGraphRefsColumn = memo(function GitGraphRefsColumn(props: {
               />
             ))}
           </Section>
-          <Section title="Local branches" {...sectionProps("local")}>
+          <Section title={gt("Local branches")} {...sectionProps("local")}>
             {lists.local.slice(0, limitOf("local")).map((branch) => (
               <LocalBranchRow
                 key={branch.name}
@@ -302,7 +310,7 @@ export const GitGraphRefsColumn = memo(function GitGraphRefsColumn(props: {
               />
             ))}
           </Section>
-          <Section title="Remote branches" {...sectionProps("remote")}>
+          <Section title={gt("Remote branches")} {...sectionProps("remote")}>
             {lists.remote.slice(0, limitOf("remote")).map((branch) => (
               <PlainRefRow
                 key={branch.name}
@@ -313,7 +321,7 @@ export const GitGraphRefsColumn = memo(function GitGraphRefsColumn(props: {
               />
             ))}
           </Section>
-          <Section title="Tags" {...sectionProps("tags")}>
+          <Section title={gt("Tags")} {...sectionProps("tags")}>
             {lists.tags.slice(0, limitOf("tags")).map((tag) => (
               <PlainRefRow
                 key={tag.name}
@@ -335,7 +343,7 @@ export const GitGraphRefsColumn = memo(function GitGraphRefsColumn(props: {
         maxSize={maxWidth}
         ariaMax={WIDTH_MAX}
         growDirection={1}
-        label="Resize refs column"
+        label={gt("Resize refs column")}
         onSizeChange={setWidth}
         className="-right-[3px]"
       />

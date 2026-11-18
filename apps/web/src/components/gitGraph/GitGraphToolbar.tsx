@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   ChevronsDownUp,
   ChevronsUpDown,
@@ -88,18 +89,21 @@ export function GitGraphToolbar(props: {
   onExpandAll: (() => void) | null;
   loadedCount: number;
 }) {
+  const gt = useGT();
   const { wide } = props;
   const allLabel =
     !wide && props.worktreePaths.length > 0
-      ? `All branches · ${props.worktreePaths.length} ${props.worktreePaths.length === 1 ? "worktree" : "worktrees"}`
-      : "All branches";
+      ? gt("All branches · {count, plural, one {{count} worktree} other {{count} worktrees}}", {
+          count: props.worktreePaths.length,
+        })
+      : gt("All branches");
   const branchItems = [
     { value: ALL_BRANCHES, label: allLabel },
-    { value: CURRENT_BRANCH, label: "Current branch" },
+    { value: CURRENT_BRANCH, label: gt("Current branch") },
     ...props.localBranches.map((name) => ({ value: name, label: name })),
   ];
   const authorItems = [
-    { value: ANY_AUTHOR, label: "Any author" },
+    { value: ANY_AUTHOR, label: gt("Any author") },
     ...props.authors.map((name) => ({ value: name, label: name })),
   ];
   return (
@@ -115,12 +119,14 @@ export function GitGraphToolbar(props: {
           else props.onBranchChange(value);
         }}
       >
-        <SelectTrigger size="sm" aria-label="Branches" className="w-auto min-w-0 max-w-56">
+        <SelectTrigger size="sm" aria-label={gt("Branches")} className="w-auto min-w-0 max-w-56">
           <SelectValue />
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
           <SelectItem value={ALL_BRANCHES}>{allLabel}</SelectItem>
-          <SelectItem value={CURRENT_BRANCH}>Current branch</SelectItem>
+          <SelectItem value={CURRENT_BRANCH}>
+            <T>Current branch</T>
+          </SelectItem>
           {props.localBranches.map((name) => (
             <SelectItem key={name} value={name}>
               {name}
@@ -128,7 +134,9 @@ export function GitGraphToolbar(props: {
           ))}
           {!wide && props.worktreePaths.length > 0 ? (
             <SelectGroup>
-              <SelectGroupLabel>Worktrees</SelectGroupLabel>
+              <SelectGroupLabel>
+                <T>Worktrees</T>
+              </SelectGroupLabel>
               {props.worktreePaths.map((path) => (
                 <SelectItem key={path} value={`${WORKTREE_PREFIX}${path}`}>
                   {pathBasename(path)}
@@ -147,7 +155,7 @@ export function GitGraphToolbar(props: {
             props.onAuthorChange(value === null || value === ANY_AUTHOR ? null : value)
           }
         >
-          <SelectTrigger size="sm" aria-label="Author" className="w-auto min-w-0 max-w-44">
+          <SelectTrigger size="sm" aria-label={gt("Author")} className="w-auto min-w-0 max-w-44">
             <SelectValue />
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
@@ -162,8 +170,8 @@ export function GitGraphToolbar(props: {
       <Input
         type="search"
         size="compact"
-        aria-label="Search message or hash"
-        placeholder="Search message or hash"
+        aria-label={gt("Search message or hash")}
+        placeholder={gt("Search message or hash")}
         value={props.search}
         onChange={(event) => props.onSearchChange(event.target.value)}
         className="min-w-32 flex-1"
@@ -172,19 +180,19 @@ export function GitGraphToolbar(props: {
         <>
           <ToolbarIconToggle
             icon={GitCommitVertical}
-            label="First parent only"
+            label={gt("First parent only")}
             pressed={props.firstParent}
             onPressedChange={props.onFirstParentChange}
           />
           <ToolbarIconToggle
             icon={Cloud}
-            label="All remote branches"
+            label={gt("All remote branches")}
             pressed={props.allRemoteBranches}
             onPressedChange={props.onAllRemoteBranchesChange}
           />
           <ToolbarIconToggle
             icon={ChevronsDownUp}
-            label="Collapse linear branches"
+            label={gt("Collapse linear branches")}
             pressed={props.collapseLinear}
             onPressedChange={props.onCollapseLinearChange}
           />
@@ -195,27 +203,31 @@ export function GitGraphToolbar(props: {
                   <Button
                     variant="ghost-muted"
                     size="icon-xs"
-                    aria-label="Expand all"
+                    aria-label={gt("Expand all")}
                     onClick={props.onExpandAll}
                   />
                 }
               >
                 <ChevronsUpDown />
               </TooltipTrigger>
-              <TooltipPopup side="top">Expand all</TooltipPopup>
+              <TooltipPopup side="top">
+                <T>Expand all</T>
+              </TooltipPopup>
             </Tooltip>
           ) : null}
         </>
       ) : (
         <Menu>
           <MenuTrigger
-            render={<Button variant="ghost-muted" size="icon-xs" aria-label="More filters" />}
+            render={<Button variant="ghost-muted" size="icon-xs" aria-label={gt("More filters")} />}
           >
             <Ellipsis />
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuGroup>
-              <MenuGroupLabel>Author</MenuGroupLabel>
+              <MenuGroupLabel>
+                <T>Author</T>
+              </MenuGroupLabel>
               <MenuRadioGroup
                 value={props.author ?? ANY_AUTHOR}
                 onValueChange={(value) =>
@@ -234,26 +246,32 @@ export function GitGraphToolbar(props: {
               checked={props.firstParent}
               onCheckedChange={props.onFirstParentChange}
             >
-              First parent
+              <T>First parent</T>
             </MenuCheckboxItem>
             <MenuCheckboxItem
               checked={props.allRemoteBranches}
               onCheckedChange={props.onAllRemoteBranchesChange}
             >
-              All remote branches
+              <T>All remote branches</T>
             </MenuCheckboxItem>
             <MenuCheckboxItem
               checked={props.collapseLinear}
               onCheckedChange={props.onCollapseLinearChange}
             >
-              Collapse linear branches
+              <T>Collapse linear branches</T>
             </MenuCheckboxItem>
-            {props.onExpandAll ? <MenuItem onClick={props.onExpandAll}>Expand all</MenuItem> : null}
+            {props.onExpandAll ? (
+              <MenuItem onClick={props.onExpandAll}>
+                <T>Expand all</T>
+              </MenuItem>
+            ) : null}
           </MenuPopup>
         </Menu>
       )}
       <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-        {props.loadedCount} {props.loadedCount === 1 ? "commit" : "commits"} loaded
+        {gt("{count, plural, one {{count} commit} other {{count} commits}} loaded", {
+          count: props.loadedCount,
+        })}
       </span>
     </div>
   );

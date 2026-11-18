@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef, VcsCommitDetailsResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Check, Copy, FileDiff, File as FileIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -48,7 +49,7 @@ function CopyHashButton({ sha }: { sha: string }) {
   return (
     <Button ref={ref} variant="outline" size="xs" onClick={() => copyToClipboard(sha, undefined)}>
       {isCopied ? <Check /> : <Copy />}
-      {isCopied ? "Copied" : "Copy hash"}
+      {isCopied ? <T>Copied</T> : <T>Copy hash</T>}
     </Button>
   );
 }
@@ -96,6 +97,7 @@ const maxColumnWidth = columnMaxSize(COLUMN_WIDTH_MAX, COLUMN_WIDTH_MIN);
 
 /** The wide layout gives the card its own column; the narrow one a resizable card under the graph. */
 function DetailsShell(props: { layout: "column" | "card"; children: ReactNode }) {
+  const gt = useGT();
   const cardRef = useRef<HTMLDivElement>(null);
   const columnRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useLocalStorage(CARD_HEIGHT_KEY, CARD_HEIGHT_DEFAULT, Schema.Number);
@@ -125,7 +127,7 @@ function DetailsShell(props: { layout: "column" | "card"; children: ReactNode })
           maxSize={maxColumnWidth}
           ariaMax={COLUMN_WIDTH_MAX}
           growDirection={-1}
-          label="Resize commit details"
+          label={gt("Resize commit details")}
           onSizeChange={setWidth}
           className="-left-[3px]"
         />
@@ -146,7 +148,7 @@ function DetailsShell(props: { layout: "column" | "card"; children: ReactNode })
         minSize={CARD_HEIGHT_MIN}
         maxSize={maxCardHeight}
         growDirection={-1}
-        label="Resize details"
+        label={gt("Resize details")}
         onSizeChange={setHeight}
       />
       {body}
@@ -163,6 +165,7 @@ export function GitGraphDetails(props: {
   layout: "column" | "card";
 }) {
   const { row } = props;
+  const gt = useGT();
   const sha = row.commit?.sha ?? null;
   const detailsQuery = useEnvironmentQuery(
     sha === null
@@ -180,11 +183,13 @@ export function GitGraphDetails(props: {
     const worktree = row.worktree;
     return (
       <DetailsShell layout={props.layout}>
-        <div className="text-sm font-medium text-warning-foreground">Uncommitted changes</div>
+        <div className="text-sm font-medium text-warning-foreground">
+          <T>Uncommitted changes</T>
+        </div>
         <dl className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
-          <Field label="Folder">{pathBasename(worktree.path)}</Field>
-          <Field label="Files">{worktree.changedFiles}</Field>
-          <Field label="Based on">
+          <Field label={gt("Folder")}>{pathBasename(worktree.path)}</Field>
+          <Field label={gt("Files")}>{worktree.changedFiles}</Field>
+          <Field label={gt("Based on")}>
             <span className="font-mono">{worktree.sha?.slice(0, 7)}</span>
           </Field>
         </dl>
@@ -196,7 +201,7 @@ export function GitGraphDetails(props: {
               onClick={() => openUncommittedInDiff(props.threadRef)}
             >
               <FileDiff />
-              Open in Diff
+              <T>Open in Diff</T>
             </Button>
           </div>
         ) : null}
@@ -216,36 +221,38 @@ export function GitGraphDetails(props: {
       <RefBadges row={row} />
       <div className="text-sm font-medium text-foreground">{subject}</div>
       <dl className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
-        <Field label="Commit">
+        <Field label={gt("Commit")}>
           <span className="font-mono">{sha}</span>
         </Field>
-        <Field label="Parents">
+        <Field label={gt("Parents")}>
           {parents.length === 0 ? (
-            "None"
+            <T>None</T>
           ) : (
             <span className="font-mono">
               {parents.map((parent) => parent.slice(0, 7)).join(", ")}
             </span>
           )}
         </Field>
-        <Field label="Author">{details?.authorName ?? commit.authorName}</Field>
-        <Field label="Date">{formatCommitDate(details?.authoredAt ?? commit.authoredAt)}</Field>
+        <Field label={gt("Author")}>{details?.authorName ?? commit.authorName}</Field>
+        <Field label={gt("Date")}>
+          {formatCommitDate(details?.authoredAt ?? commit.authoredAt)}
+        </Field>
         {row.refs.length > 0 ? (
-          <Field label="On">{row.refs.map(refBadgeLabel).join(", ")}</Field>
+          <Field label={gt("On")}>{row.refs.map(refBadgeLabel).join(", ")}</Field>
         ) : null}
       </dl>
       <div className="flex flex-wrap gap-2">
         <CopyHashButton sha={sha} />
         <Button variant="outline" size="xs" onClick={() => openCommitInDiff(props.threadRef, sha)}>
           <FileDiff />
-          Open in Diff
+          <T>Open in Diff</T>
         </Button>
       </div>
       {detailsQuery.error ? (
         <div className="flex items-center justify-between gap-2 text-xs text-destructive-foreground">
           <span className="min-w-0 truncate">{detailsQuery.error}</span>
           <Button variant="outline" size="xs" onClick={detailsQuery.refresh}>
-            Retry
+            <T>Retry</T>
           </Button>
         </div>
       ) : loaded === null ? (
@@ -272,8 +279,17 @@ export function GitGraphDetails(props: {
           <div className="flex min-h-0 flex-col gap-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="font-medium text-foreground">
-                {loaded.files.length} changed {loaded.files.length === 1 ? "file" : "files"}
-                {loaded.filesTruncated ? " (truncated)" : ""}
+                {loaded.filesTruncated
+                  ? gt(
+                      "{count, plural, one {{count} changed file (truncated)} other {{count} changed files (truncated)}}",
+                      { count: loaded.files.length },
+                    )
+                  : gt(
+                      "{count, plural, one {{count} changed file} other {{count} changed files}}",
+                      {
+                        count: loaded.files.length,
+                      },
+                    )}
               </span>
               <span className="font-mono tabular-nums">
                 <span className="text-diff-addition-foreground">
@@ -297,7 +313,9 @@ export function GitGraphDetails(props: {
                     <MiddleTruncate value={file.path} className="flex-1" />
                     <span className="shrink-0 font-mono tabular-nums">
                       {file.additions === null || file.deletions === null ? (
-                        <span className="text-muted-foreground">binary</span>
+                        <span className="text-muted-foreground">
+                          <T>binary</T>
+                        </span>
                       ) : (
                         <>
                           <span className="text-diff-addition-foreground">+{file.additions}</span>{" "}

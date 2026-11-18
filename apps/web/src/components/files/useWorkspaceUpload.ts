@@ -10,10 +10,12 @@ import {
   type AtomCommandResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 import { useRef, useState } from "react";
 
 import { toastManager } from "~/components/ui/toast";
 import { requestConfirmDialog } from "~/confirmDialog";
+import { m } from "~/i18n/messages";
 import { readPreparedConnection } from "~/state/session";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -40,17 +42,23 @@ function postBytes(
     xhr.upload.addEventListener("progress", (event) => onProgress(event.loaded));
     xhr.addEventListener("load", () => {
       if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error(xhr.responseText.trim() || `Upload rejected (${xhr.status}).`));
+      else
+        reject(
+          new Error(
+            xhr.responseText.trim() ||
+              m(msg("Upload rejected ({status})."), { status: xhr.status }),
+          ),
+        );
     });
-    xhr.addEventListener("error", () => reject(new Error("Upload failed.")));
-    xhr.addEventListener("timeout", () => reject(new Error("Upload timed out.")));
-    xhr.addEventListener("abort", () => reject(new Error("Upload cancelled.")));
+    xhr.addEventListener("error", () => reject(new Error(m(msg("Upload failed.")))));
+    xhr.addEventListener("timeout", () => reject(new Error(m(msg("Upload timed out.")))));
+    xhr.addEventListener("abort", () => reject(new Error(m(msg("Upload cancelled.")))));
     xhr.send(file);
   });
 }
 
 const describeError = (error: unknown) =>
-  error instanceof Error && error.message ? error.message : "Upload failed.";
+  error instanceof Error && error.message ? error.message : m(msg("Upload failed."));
 
 interface UploadBatch {
   readonly environmentId: EnvironmentId;
@@ -71,11 +79,14 @@ interface UploadBatch {
 
 // Kept outside the hook: the React Compiler does not compile the counters this loop updates.
 async function runUploadBatch(batch: UploadBatch) {
-  const failures = batch.skipped.map((path) => `${path}: skipped`);
+  const failures = batch.skipped.map((path) => m(msg("{path}: skipped"), { path }));
   const tooLarge = batch.files.filter((dropped) => dropped.file.size > PROJECT_UPLOAD_MAX_BYTES);
   for (const dropped of tooLarge) {
     failures.push(
-      `${dropped.relativePath}: larger than ${formatAttachmentSize(PROJECT_UPLOAD_MAX_BYTES)}`,
+      m(msg("{path}: larger than {size}"), {
+        path: dropped.relativePath,
+        size: formatAttachmentSize(PROJECT_UPLOAD_MAX_BYTES),
+      }),
     );
   }
   const files = batch.files.filter((dropped) => !tooLarge.includes(dropped));
@@ -114,8 +125,8 @@ async function runUploadBatch(batch: UploadBatch) {
     const url = connection
       ? resolveAssetUrl(connection.httpBaseUrl, issued.value.relativeUrl)
       : null;
-    if (!url) throw new Error("The environment is not connected.");
-    if (batch.isCancelled()) throw new Error("Upload cancelled.");
+    if (!url) throw new Error(m(msg("The environment is not connected.")));
+    if (batch.isCancelled()) throw new Error(m(msg("Upload cancelled.")));
     let unregister = () => {};
     try {
       await postBytes(
@@ -151,7 +162,9 @@ async function runUploadBatch(batch: UploadBatch) {
           bytesDone += dropped.file.size;
         } catch (error) {
           if (batch.isCancelled()) break;
-          failures.push(`${dropped.relativePath}: ${describeError(error)}`);
+          failures.push(
+            m(msg("{path}: {error}"), { path: dropped.relativePath, error: describeError(error) }),
+          );
         } finally {
           inFlightBytes.delete(dropped);
         }
@@ -168,15 +181,22 @@ async function runUploadBatch(batch: UploadBatch) {
     if (existing.length > 0 && !batch.isCancelled()) {
       const listed = existing.slice(0, 8).map((dropped) => dropped.relativePath);
       const more =
-        existing.length > listed.length ? `\n…and ${existing.length - listed.length} more` : "";
-      const count = existing.length === 1 ? "1 existing file" : `${existing.length} existing files`;
+        existing.length > listed.length
+          ? m(msg("\n…and {count} more"), { count: existing.length - listed.length })
+          : "";
+      const count = m(
+        msg("{count, plural, one {{count} existing file} other {{count} existing files}}"),
+        { count: existing.length },
+      );
       const replace =
-        (await requestConfirmDialog(`Replace ${count}?\n${listed.join("\n")}${more}`, {
-          variant: "destructive",
-        })) ?? false;
+        (await requestConfirmDialog(
+          m(msg("Replace {count}?\n{list}{more}"), { count, list: listed.join("\n"), more }),
+          { variant: "destructive" },
+        )) ?? false;
       if (replace) await uploadAll(existing, true);
       else {
-        for (const dropped of existing) failures.push(`${dropped.relativePath}: kept existing`);
+        for (const dropped of existing)
+          failures.push(m(msg("{path}: kept existing"), { path: dropped.relativePath }));
       }
     }
   } finally {
@@ -188,20 +208,22 @@ async function runUploadBatch(batch: UploadBatch) {
   if (batch.isCancelled()) {
     toastManager.add({
       type: "warning",
-      title: "Upload cancelled",
-      description: `${uploaded} of ${attempted} files uploaded.`,
+      title: m(msg("Upload cancelled")),
+      description: m(msg("{uploaded} of {attempted} files uploaded."), { uploaded, attempted }),
     });
   } else if (failures.length > 0) {
     toastManager.add({
       type: uploaded > 0 ? "warning" : "error",
-      title: `Uploaded ${uploaded} of ${attempted} files`,
+      title: m(msg("Uploaded {uploaded} of {attempted} files"), { uploaded, attempted }),
       description: failures.slice(0, 6).join("\n") + (failures.length > 6 ? "\n…" : ""),
     });
   } else if (uploaded > 0) {
     toastManager.add({
       type: "success",
-      title: uploaded === 1 ? "File uploaded" : `${uploaded} files uploaded`,
-      description: batch.folderPath ? `${batch.folderPath}/` : "Project root",
+      title: m(msg("{uploaded, plural, =1 {File uploaded} other {{uploaded} files uploaded}}"), {
+        uploaded,
+      }),
+      description: batch.folderPath ? `${batch.folderPath}/` : m(msg("Project root")),
     });
   }
 }

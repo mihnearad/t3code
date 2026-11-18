@@ -1,0 +1,8 @@
+# Generated UI catalogs hold labels such as "API key" and "tokens"; gitleaks reads their
+# hash keys as generic API keys. Everything else keeps the default rules.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated i18n catalogs (message hash -> UI text)"
+paths = ['''apps/(web|mobile|desktop)/src/i18n/translations/[^/]+\.json$''']

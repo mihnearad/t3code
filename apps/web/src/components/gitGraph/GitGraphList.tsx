@@ -1,4 +1,5 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { T, useGT, Var } from "gt-react";
 import { ChevronsUpDown } from "lucide-react";
 import { memo, type RefObject } from "react";
 
@@ -118,7 +119,9 @@ const LaneCell = memo(function LaneCell(props: {
               />
             }
           />
-          <TooltipPopup side="top">On a hidden lane</TooltipPopup>
+          <TooltipPopup side="top">
+            <T>On a hidden lane</T>
+          </TooltipPopup>
         </Tooltip>
       ) : null}
     </span>
@@ -134,13 +137,14 @@ const GitGraphRowView = memo(function GitGraphRowView(props: {
   onSelect: (key: string) => void;
   onExpand: (key: string) => void;
 }) {
+  const gt = useGT();
   const { row, selected, compact, laneCount, columns } = props;
   const { commit, worktree, collapsed } = row;
   if (collapsed) {
     return (
       <button
         type="button"
-        aria-label={`Expand ${collapsed.count} commits`}
+        aria-label={gt("Expand {count} commits", { count: collapsed.count })}
         onClick={() => props.onExpand(row.key)}
         style={{ gridTemplateColumns: columns, height: ROW_HEIGHT }}
         className="grid w-full cursor-pointer items-center gap-2 rounded-sm text-left text-xs text-muted-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -148,13 +152,17 @@ const GitGraphRowView = memo(function GitGraphRowView(props: {
         <LaneCell row={row} laneCount={laneCount} uncommitted={false} />
         <span className="col-[2/-1] flex min-w-0 items-center gap-1.5">
           <ChevronsUpDown aria-hidden className="size-3.5 shrink-0" />
-          <span className="truncate tabular-nums">{collapsed.count} commits</span>
+          <span className="truncate tabular-nums">
+            <T>
+              <Var>{collapsed.count}</Var> commits
+            </T>
+          </span>
         </span>
       </button>
     );
   }
   const uncommitted = worktree !== null;
-  const subject = uncommitted ? "Uncommitted changes" : (commit?.subject ?? "");
+  const subject = uncommitted ? gt("Uncommitted changes") : (commit?.subject ?? "");
   const maxBadges = compact ? MAX_ROW_BADGES_NARROW : MAX_ROW_BADGES_WIDE;
   const visibleRefs = row.refs.slice(0, maxBadges);
   const hiddenRefs = row.refs.slice(maxBadges);
@@ -193,7 +201,10 @@ const GitGraphRowView = memo(function GitGraphRowView(props: {
             {subject}
             {uncommitted && worktree ? (
               <span className="ms-2 text-muted-foreground">
-                {worktree.changedFiles} files · {pathBasename(worktree.path)}
+                <T>
+                  <Var>{worktree.changedFiles}</Var> files ·{" "}
+                  <Var>{pathBasename(worktree.path)}</Var>
+                </T>
               </span>
             ) : null}
           </TooltipTrigger>
@@ -229,6 +240,7 @@ export function GitGraphList(props: {
   onExpand: (key: string) => void;
   onLoadMore: () => void;
 }) {
+  const gt = useGT();
   const { model, compact, listRef } = props;
   const laneCount = Math.max(
     1,
@@ -245,11 +257,21 @@ export function GitGraphList(props: {
           style={{ gridTemplateColumns: columns }}
           className="grid h-6 shrink-0 items-center gap-2 border-b border-border/60 px-1.5 text-2xs text-muted-foreground"
         >
-          <span>Graph</span>
-          <span>Message</span>
-          <span>Author</span>
-          <span className="text-right">Date</span>
-          <span>Commit</span>
+          <span>
+            <T>Graph</T>
+          </span>
+          <span>
+            <T>Message</T>
+          </span>
+          <span>
+            <T>Author</T>
+          </span>
+          <span className="text-right">
+            <T>Date</T>
+          </span>
+          <span>
+            <T>Commit</T>
+          </span>
         </div>
       )}
       <LegendList<GitGraphDisplayRow>
@@ -286,10 +308,10 @@ export function GitGraphList(props: {
                 onClick={props.onLoadMore}
               >
                 {props.loadMoreError
-                  ? "Retry"
+                  ? gt("Retry")
                   : props.loadingMore
-                    ? "Loading older commits"
-                    : "Load older commits"}
+                    ? gt("Loading older commits")
+                    : gt("Load older commits")}
               </Button>
             </div>
           ) : null

@@ -5,11 +5,13 @@ import { GIT_GRAPH_PAGE_SIZE } from "@t3tools/client-runtime/state/git-graph";
 import type { ScopedThreadRef, VcsRepositoryWorktree } from "@t3tools/contracts";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { GitGraph } from "lucide-react";
+import { msg, T, useGT } from "gt-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useLayoutEffect, useRef, useState } from "react";
 
+import { m } from "~/i18n/messages";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { observeResize } from "~/lib/observeResize";
@@ -101,6 +103,7 @@ function GitGraphSurface(props: {
   const { threadRef, cwd } = props;
   const environmentId = threadRef.environmentId;
   const registry = useContext(RegistryContext);
+  const gt = useGT();
   const { ref: rootRef, wide } = useSurfaceWide();
   const listRef = useRef<LegendListRef>(null);
 
@@ -229,8 +232,8 @@ function GitGraphSurface(props: {
     toastManager.add(
       stackedThreadToast({
         type: "info",
-        title: "Commit not loaded",
-        description: "Load older commits or clear the filters to reach it.",
+        title: m(msg("Commit not loaded")),
+        description: m(msg("Load older commits or clear the filters to reach it.")),
       }),
     );
   });
@@ -258,8 +261,8 @@ function GitGraphSurface(props: {
     return (
       <div ref={rootRef} className="flex h-full min-h-0 flex-col">
         <GraphEmpty
-          title="Not a Git repository"
-          description="The Git graph needs a project that is a Git repository."
+          title={gt("Not a Git repository")}
+          description={gt("The Git graph needs a project that is a Git repository.")}
         />
       </div>
     );
@@ -269,11 +272,11 @@ function GitGraphSurface(props: {
     firstResult === undefined || (firstResult._tag === "Initial" && firstError === null);
   const body = firstError ? (
     <GraphEmpty
-      title="Could not load the graph"
+      title={gt("Could not load the graph")}
       description={firstError}
       action={
         <Button variant="outline" size="xs" onClick={retry}>
-          Retry
+          <T>Retry</T>
         </Button>
       }
     />
@@ -283,13 +286,13 @@ function GitGraphSurface(props: {
     <GraphEmpty
       title={
         allCommits.length === 0 && term === "" && ref === undefined
-          ? "No commits yet"
-          : "No matching commits"
+          ? gt("No commits yet")
+          : gt("No matching commits")
       }
       description={
         allCommits.length === 0 && term === "" && ref === undefined
-          ? "Commit something and it appears here."
-          : "Change the branch, author or search to see more."
+          ? gt("Commit something and it appears here.")
+          : gt("Change the branch, author or search to see more.")
       }
     />
   ) : (
@@ -378,6 +381,7 @@ export default function GitGraphPanel(props: {
   visible: boolean;
   workspaceMutationId: string | null;
 }) {
+  const gt = useGT();
   const thread = useQuietThreadShell(props.threadRef);
   const project = useProject(
     thread ? scopeProjectRef(thread.environmentId, thread.projectId) : null,
@@ -386,8 +390,8 @@ export default function GitGraphPanel(props: {
   if (!props.visible || thread === null || cwd === null) {
     return (
       <GraphEmpty
-        title="Git graph unavailable"
-        description="Open a thread in a project to see its repository."
+        title={gt("Git graph unavailable")}
+        description={gt("Open a thread in a project to see its repository.")}
       />
     );
   }
