@@ -116,7 +116,7 @@ export class WorkspaceEntries extends Context.Service<
     readonly searchContents: (
       input: ProjectSearchContentsInput,
     ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceEntriesError>;
-    readonly refresh: (cwd: string) => Effect.Effect<void>;
+    readonly refresh: (cwd: string, mode?: "passive") => Effect.Effect<void>;
   }
 >()("t3/workspace/WorkspaceEntries") {}
 
@@ -203,7 +203,7 @@ export const make = Effect.gen(function* () {
     lastSearchedAt.set(indexKey, now);
   };
 
-  const rescan = Effect.fn("WorkspaceEntries.rescan")(function* (cwd: string) {
+  const rescan = Effect.fn("WorkspaceEntries.rescan")(function* (cwd: string, mode?: "passive") {
     const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(Effect.orElseSucceed(() => cwd));
     for (const variant of WorkspaceSearchIndex.WORKSPACE_SEARCH_INDEX_VARIANTS) {
       const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, variant);
@@ -230,7 +230,7 @@ export const make = Effect.gen(function* () {
       });
       yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        yield* searchIndex.refresh();
+        yield* searchIndex.refresh(mode);
       }).pipe(
         Effect.provide(workspaceSearchIndexes.get(indexKey)),
         Effect.catchTags({
@@ -241,21 +241,25 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // One rescan per cwd at a time. A caller joins the next rescan, which starts after the caller
+  // One rescan per cwd at a time. A passive caller returns while one runs. Any other caller joins the next rescan, which starts after the caller
   // asked, so refresh still returns only once changes made before the call are indexed.
-  const refreshStates = new Map<string, { queued: Deferred.Deferred<void> | undefined }>();
+  type RefreshState = { queued: Deferred.Deferred<void> | undefined };
+  const refreshStates = new Map<string, RefreshState>();
 
   const drainRescans = Effect.fn("WorkspaceEntries.drainRescans")(function* (
     cwd: string,
-    state: { queued: Deferred.Deferred<void> | undefined },
+    state: RefreshState,
     first: Deferred.Deferred<void>,
+    firstMode: "passive" | undefined,
   ) {
     let current: Deferred.Deferred<void> | undefined = first;
+    let mode = firstMode;
     while (current) {
-      yield* rescan(cwd).pipe(Effect.ignoreCause({ log: true }));
+      yield* rescan(cwd, mode).pipe(Effect.ignoreCause({ log: true }));
       yield* Deferred.succeed(current, undefined);
       current = yield* Effect.sync(() => {
         const next = state.queued;
+        mode = undefined;
         state.queued = undefined;
         if (!next) refreshStates.delete(cwd);
         return next;
@@ -264,22 +268,23 @@ export const make = Effect.gen(function* () {
   });
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
-    function* (cwd) {
+    function* (cwd, mode) {
       const mine = yield* Deferred.make<void>();
       const joined = yield* Effect.sync(() => {
         const running = refreshStates.get(cwd);
+        if (running && mode === "passive") return { wait: undefined, started: undefined };
         if (running) {
           running.queued ??= mine;
           return { wait: running.queued, started: undefined };
         }
-        const started: { queued: Deferred.Deferred<void> | undefined } = { queued: undefined };
+        const started: RefreshState = { queued: undefined };
         refreshStates.set(cwd, started);
         return { wait: mine, started };
       });
       if (joined.started) {
-        yield* Effect.forkDetach(drainRescans(cwd, joined.started, mine));
+        yield* Effect.forkDetach(drainRescans(cwd, joined.started, mine, mode));
       }
-      yield* Deferred.await(joined.wait);
+      if (joined.wait) yield* Deferred.await(joined.wait);
     },
   );
 
@@ -344,7 +349,9 @@ export const make = Effect.gen(function* () {
 
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entries.toSorted((left, right) =>
+          left.name.localeCompare(right.name, undefined, { numeric: true }),
+        ),
       };
     },
   );
